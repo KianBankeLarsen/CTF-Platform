@@ -2,7 +2,7 @@
     "name": "@ctf/platform",
     "version": "1.0.0",
     "devDependencies": {
-        "@types/node": "^18",
+        "@types/node": "^22",
         "typescript": "^5.0.0"
     },
     "dependencies": {
