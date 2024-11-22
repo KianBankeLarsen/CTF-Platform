@@ -185,7 +185,13 @@ pulumi stack change-secrets-provider passphrase
 # This will prompt you to enter the current passphrase and then a new one.
 ```
 
-If this is your first time deploying the platform, you'll need to initialize the stacks. Pulumi projects can store their state in either an external BLOB or a local state file. Regardless, you'll need to initialize the stacks to ensure they are part of your state. Do this by running:
+If this is your first time deploying the platform, you'll need to initialize the stacks. Pulumi projects can store their state in either an external BLOB or a local state file. You will need to `pulumi login` to use either. To use a local state file, run:
+
+```bash
+pulumi login --local
+```
+
+Regardless, you'll need to initialize the stacks to ensure they are part of your state. Do this by running:
 
 ```bash
 pulumi stack init <stack>
@@ -235,9 +241,11 @@ For even more advanced setups, if using a provider, the complete infrastructure 
 
 <a name="ucloud"></a>
 ## ☁️ Deploy to UCloud
-Deploying our platform onto UCloud is a streamlined process, thanks to our comprehensive Ansible script. This script is crafted to set up the Kubernetes cluster, install Tailscale, and deploy the Pulumi stacks, ensuring a seamless and efficient deployment experience. 
+Deploying our platform onto UCloud is straightforward with our Ansible script. This script sets up the Kubernetes cluster, installs Tailscale, and deploys the Pulumi stacks, making the whole process smooth and efficient.
 
-For detailed setup instructions and additional information, please refer to the [README.md](./ucloud-k8s/README.md).
+We're also using [GitHub Actions](https://github.com/KianBankeLarsen/CTF-Platform/actions/workflows/ucloud-deploy.yml) in the main-wrapping repository to automate our CI/CD workflows. This helps keep everything up-to-date and running smoothly.
+
+For detailed setup instructions and more information, check out the [README.md](./ucloud-k8s/README.md).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
