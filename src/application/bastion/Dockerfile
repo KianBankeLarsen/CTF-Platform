@@ -1,4 +1,4 @@
-FROM alpine:3.20.3
+FROM alpine:3.21.0
 
 # Install necessary packages
 RUN apk add --update dumb-init openssh shadow
