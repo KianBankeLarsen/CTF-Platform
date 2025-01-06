@@ -351,7 +351,7 @@ pulumi.all([DOCKER_USERNAME, DOCKER_PASSWORD, POSTGRES_CTFD_ADMIN_PASSWORD, CTFD
                                     { name: "APPLICATION_ROOT", value: cleanedCtfdPath },
                                     { name: "REVERSE_PROXY", value: "true" },
                                     { name: "JWTSECRET", value: CTFD_JWT_SECRET },
-                                    { name: "BACKENDURL", value: "http://deployer" },
+                                    { name: "BACKENDURL", value: `http://deployer.${NS}.svc.cluster.local:8080` },
                                     { name: "API_TOKEN", value: CTFD_API_TOKEN },
                                     {
                                         name: "DATABASE_URL",
@@ -383,7 +383,7 @@ pulumi.all([DOCKER_USERNAME, DOCKER_PASSWORD, POSTGRES_CTFD_ADMIN_PASSWORD, CTFD
     const ctfdService = serviceTemplate(
         "ctfd",
         NS,
-        [{ port: CTFD_PROXY_PORT }],
+        [{ port: 443, targetPort: CTFD_PROXY_PORT }],
         appLabels.ctfd
     )
 
@@ -414,7 +414,7 @@ pulumi.all([DOCKER_USERNAME, DOCKER_PASSWORD, POSTGRES_CTFD_ADMIN_PASSWORD, CTFD
                             service: {
                                 name: ctfdService.metadata.name,
                                 port: {
-                                    number: CTFD_PROXY_PORT,
+                                    number: 443,
                                 },
                             },
                         },
@@ -574,10 +574,11 @@ pulumi.all([DOCKER_USERNAME, DOCKER_PASSWORD, POSTGRES_CTFD_ADMIN_PASSWORD, CTFD
             },
             env: {
                 CTFDAPITOKEN: CTFD_API_TOKEN,
-                CTFDURL: "https://ctfd",
+                CTFDURL: `https://ctfd/ctfd`,
                 BACKENDURL: `http://deployer.${NS}.svc.cluster.local:8080`,
                 JWKSURL: "https://keycloak/keycloak/realms/ctf/protocol/openid-connect/certs",
-                ROOTCERT: "/var/run/autocert.step.sm/root.crt"
+                ROOTCERT: "/var/run/autocert.step.sm/root.crt",
+                CHALLENGEDOMAIN: "." + HENRIK_BACKEND_HOST
             }
         }
     }, { dependsOn: backendAPI });
