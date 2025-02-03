@@ -1,2 +1,2 @@
-python-keycloak==5.2.0
+python-keycloak==5.3.0
 jwcrypto==1.5.6
