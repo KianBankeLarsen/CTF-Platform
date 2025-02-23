@@ -1,4 +1,4 @@
-FROM alpine:3.21.0
+FROM alpine:3.21.3
 
 # Install necessary packages
 RUN apk add --update dumb-init openssh shadow step-cli
