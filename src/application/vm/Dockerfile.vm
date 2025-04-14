@@ -1,4 +1,4 @@
-FROM python:3.14.0a5-slim-bullseye AS download
+FROM python:3.14.0a7-slim-bullseye AS download
 WORKDIR /main
 COPY requirements.txt .
 COPY get_vm.py .
