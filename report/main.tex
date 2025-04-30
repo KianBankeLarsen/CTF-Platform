@@ -993,6 +993,16 @@ Resource availability is limited. Currently, only one solution can run per chall
 The bastion host is the sole entry point for users accessing environments via SSH, making security a top priority. While using Alpine with most features disabled provides a strong foundation for hardening. This section examines the impact of a shared user model and alternative authentication methods beyond SSH certificates.
 
 \subsection{A Single User}
+Initially, the goal was for each platform user to have an individual account on the bastion, aligning with the inclusion of their email’s local part as an SSH certificate principal. At the time, role-to-principal mapping was not understood. While automatic user creation introduces challenges in tracking, sharing a single account is also problematic due to monitoring difficulties and the risk of shell access, despite security measures.
+
+To implement automatic user creation, I attempted a solution using \texttt{libnss\_shim} \parencite{libnss_shim}, an adapter that simplifies Name Service Switch (NSS), but installation on Alpine was unsuccessful. An alternative approach using a custom NSS configuration also failed. Implementing SSH \texttt{ForceCommand} and \texttt{AuthorizedKeysCommand} proved ineffective, as users were rejected before either command could execute. The intended method was to map nonexistent users to unique UIDs and create home directories, potentially using \texttt{pam\_mkhomedir.so} \parencite{pam_mkhomedir}. However, due to these limitations, sharing a single account on the bastion is currently the most viable approach, supported by the following configurations: 
+
+\begin{itemize}
+    \item \texttt{PermitTTY no}
+    \item \texttt{ForceCommand /usr/sbin/nologin}
+\end{itemize}
+
+Instead of individual accounts, users are assigned a bastion role mapped to their SSH principal, enabling access through a shared bastion account. Each SSH session remains isolated, maintaining separation. A user is essentially just a UID, a set of permissions, and a home directory, ensuring security remains manageable within this framework. Since access depends on the bastion role, it can be revoked by removing the role, providing straightforward control.
 
 \subsection{Alternative Authentication}
 Before implementing certificate-based authentication, an alternative approach considered was using a Pluggable Authentication Module (PAM) OAuth library for SSH authentication. This module executes a script to verify whether a login attempt is permitted, enabling authentication via Keycloak using a username and password. However, this would have required repeated authentication when accessing VMs and containers with administrator privileges. While SSO could streamline the process, users would still need to open a new browser tab for authentication. 
@@ -1000,12 +1010,27 @@ Before implementing certificate-based authentication, an alternative approach co
 Public key authentication was also considered, but managing $x$ users across $y$ servers would require $x \cdot y$ total number of stored public keys, making it challenging to scale. The current implementation instead relies on certificates issued by a trusted CA. Any entity trusting the CA accepts the certificate as valid authentication, reducing the need for repeated authentication to once every 24 hours. The disadvantage is that the user must have the \texttt{step} CLI installed to request a personal certificate. As SSH certificates are a widely adopted solution, we decided to proceed with this approach \parencite{smallstep_ssh_certificates}.
 
 \section{HTTP Strict Transport Security}
+HTTP Strict Transport Security (HSTS) is a web security policy mechanism designed to protect websites against attacks such as protocol downgrade attacks. In the NGINX ingress controller, HSTS is enabled by default, including for subdomains. When first connecting to an HSTS-enabled website, the initial connection may be insecure; however, the browser remembers the HSTS settings for future access. If necessary, the site can be \textit{forgotten}, clearing stored HSTS information. This may be required if the site is no longer trusted or if HSTS needs to be disabled.
 
-\newpage
+To address the risk associated with the initial insecure connection, browsers maintain an HSTS preload list \parencite{hstspreload}. This list allows them to enforce HSTS before receiving response headers, thereby avoiding the first insecure request. However, removal from the preload list is difficult, and once a domain is added, it is nearly impossible to remove. Fortunately, this feature is not enabled by default.
+
+According to RFC 6797, HSTS enforcement fails when all of the following conditions are met \parencite{rfc6797}:
+
+\begin{itemize}
+    \item The organization issues its own certificate.
+    \item The certificate is not automatically trusted.
+    \item The website enforces HSTS and uses its own certificate.
+    \item The certificate does not match a valid TLS certificate association.
+\end{itemize}
+
+HSTS was disabled entirely on the ingress controller due to the inclusion of the subdomain option, which imposed HSTS requirements on subdomains for which a trusted certificate could not be obtained. This effectively made certificate bootraping mandatory, contrary to the intended flexibility. While an alternative approach would have been to disable the subdomain option while retaining HSTS for the main domain and trusted subdomains, full deactivation was deemed the safer choice to avoid potential issues -- although using HSTS remains the more secure option.
+
 
 \section{Certificate Issuance}
 
 \section{Docker Registry}
+
+\newpage
 
 \section{Performance of Hardware Virtualization}
 
