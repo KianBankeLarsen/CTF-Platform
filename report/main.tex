@@ -428,7 +428,7 @@ NGINX is an HTTP(S) server, reverse proxy, content cache, load balancer, TCP/UDP
 
 Using Docker's multi-stage builds, a static website can be created using a single Dockerfile. Earlier stages contain the necessary build tools, while the final image only includes the static files and configuration. This approach optimizes the final Docker image by excluding unnecessary build dependencies, leaving only the NGINX application, its configuration file, and the static HTML files.
 
-\section{Private Registry}
+\section{Private Registry}\label{sec:private_registry}
 A private registry is used to store and manage container images, allowing organizations to host their own images, control access, and track versions. While Docker Hub is a public registry, it also provides private repositories. GitLab and GitHub offer similar repository services. In some cases, hosting a private registry locally is preferable to prevent images from being pushed outside the firewall. This approach can reduce costs associated with hosted registries or ensure images remain airgapped.
 
 Docker Hub introduced new rate limits, setting a maximum of 10 pulls per hour for unauthenticated users and 100 pulls per hour for authenticated users. This was a significant reduction from the previous limits of 200 pulls per six hours for unauthenticated users and 200 pulls per six hours for authenticated users. In response to user feedback, Docker revisited its policies and decided to maintain the current rate limits \Parencite{DockerHubPolicies}.
@@ -968,7 +968,7 @@ The connotation of technical debt often implies a burden to be avoided, yet in t
 
 Upon code handover, cleanup was necessary. The code base contained unused code that should have been removed and redundant logic that required refactoring. This included access token parsing, where unnecessary validity checks duplicated the verification already handled by the library.
 
-The database schema previously relied on migration files, which are useful for production systems but unnecessary for non-production environments. The down migrations was not defined. These migrations have been consolidated into a single file that defines the database tables and constraints. The backend could also have benefited from using an Object-Relational Mapping (ORM) for a more structured approach to database interactions.
+The database schema previously relied on migration files, which are useful for production systems but unnecessary for non-production environments. The down migrations was not defined. These migrations have been consolidated into a single file that defines the database tables and constraints. The backend could also have benefited from using an Object-Relational Mapping (ORM) for a more structured approach to database interactions. The database authentication mechanism was refactored to resolve recurring issues stemming from Helm reinstallation. Previously, each reinstall mistakenly generated a new secret, causing authentication failures because the persisted storage continued to expect the original credentials.
 
 Kubernetes resources for the Traefik controller were removed, and \texttt{Ingress} resources were patched to correctly use PKI-issued certificates. The server have also been configured to trust the PKI root certificate to allow secure HTTPS requests. 
 
@@ -1025,22 +1025,38 @@ According to RFC 6797, HSTS enforcement fails when all of the following conditio
 
 HSTS was disabled entirely on the ingress controller due to the inclusion of the subdomain option, which imposed HSTS requirements on subdomains for which a trusted certificate could not be obtained. This effectively made certificate bootraping mandatory, contrary to the intended flexibility. While an alternative approach would have been to disable the subdomain option while retaining HSTS for the main domain and trusted subdomains, full deactivation was deemed the safer choice to avoid potential issues -- although using HSTS remains the more secure option.
 
+\section{Docker Registry}
+A Docker registry serves more than just as a storage solution for container images -- it also enables caching mechanisms and helps manage rate limits efficiently. This section explores how the already implemented registry can be leveraged more effectively to maximize its potential.
+
+\subsection{Caching}
+When a challenge is started, it launches a completely fresh VM, with its own Docker Daemon that is not shared with the host. Since this VM has never built anything before, it cannot leverage caching, even if the challenge has been started by another user. Docker and Docker Compose provide \texttt{cache\_to} and \texttt{cache\_from} capabilities, allowing developers to specify a registry for caching purposes \parencite{docker_cache}\parencite{docker_compose_build}. These properties enable a VM without local cache to utilize a shared cache from the registry. Alternatively, an image can be pushed to the registry and referenced in the Compose file.
+
+However, these solutions require users to manually specify the registry, which presents challenges related to authentication and registry exposure. While a Dockerfile can be executed with caching options without user involvement, modifying the Docker Compose file remains necessary for proper functionality. These constraints are too rigid to reasonably impose on our users.
+
+\subsection{Rate Limits}
+Docker's announcement regarding extreme rate limit reductions was eventually withdrawn, as mentioned in Section \ref{sec:private_registry}. While the current unauthenticated rate limit is not a critical concern, it becomes insufficient when scaling the platform for larger events. A Docker Compose file can easily include five services, and if 20 participants start such a challenge, the rate limit is exhausted for the next six hours. Virtual machines can be authenticated to double the rate limit, but this merely delays the issue rather than resolving the underlying problem. Unlimited access requires a paid subscription.
+
+Neither the virtual machines nor the registry have been optimized according to best practices, and implementing a mirror would significantly improve the platform's ability to handle rate limits. Research into Harbor has shown that more advanced solutions exist to meet these requirements, but this realization came only after we had already deployed a registry. Had we conducted a more thorough evaluation earlier, we might have chosen Harbor instead. Harbor also supports OIDC SSO \parencite{harbor_oidc}. This experience underscores the value of comprehensive research before implementation to ensure the most effective solutions are adopted.
 
 \section{Certificate Issuance}
+While the PKI effectively facilitates automatic certificate issuance, chaos testing conducted by Matteo Trentin has revealed areas for improvement. Issues have been observed in deployments using Autocert, where the Autocert sidecar container appears to fail to request a certificate when the PKI is unavailable. Although the failure is evident, the core issue is that the sidecar does not attempt to retry the request, and with no health checks in place to restart it, the primary container requiring the certificate enters a crash loop. Manually deleting the pod forces a restart of both containers, allowing the service to start successfully, provided the PKI has properly initialized in the meantime.
 
-\section{Docker Registry}
+This issue has not been observed when using certificate resources in Kubernetes, where cert-manager creates Kubernetes secrets containing TLS certificates. Even if cert-manager fails, the certificate remains accessible via the previously generated secret, ensuring continued operation. Cert-manager only needs to renew certificates before expiration, making it potentially more reliable than Autocert out of the box. Further testing is necessary to reach a definitive conclusion.
 
-\newpage
+\section{Stack Update}
+Most development occurs within the application stack, and deploying recent changes to production requires the use of the \texttt{pulumi up} command. This command generates a preview of the changes, allowing them to be reviewed and accepted. Once applied, the changes should take effect immediately in the production environment. While this is typically the case, there are instances where downstream pods are not restarted, preventing changes from being \textit{directly} applied. The issue arises because images are correctly built and pushed to the registry, but Pulumi does not recognize these changes for dependent deployments, resulting in a lack of automatic restarts. As a result, the updates are made but remain ineffective. This problem has previously been encountered when using plain Helm. Investigating how Pulumi integrates with Kubernetes and Helm is necessary to eliminate the need for manual intervention. Notably, the image is referenced using its digest, ensuring specificity, yet the issue persists. Manually forcing a pod restart resolves the problem, either by deleting the affected pod or performing a rollout restart on the corresponding deployment. Anything that triggers a new image pull should suffice. So far, this issue has only been observed in the Deployer Helm chart.
 
-\section{Performance of Hardware Virtualization}
-
-\subsection{Comparison -- is it worth?}
+Another notable behavior is that the CTFd image is rebuilt even when no actual changes have been made. This occurs because the context specified in Pulumi is too broad due to the folder structure. Since the context encompasses the entire \texttt{/src/application} directory, any minor modifications within that directory trigger an unnecessary rebuild. While this does not introduce functional issues, it results in unnecessary build time during stack update.
 
 \section{BADM500 Lecture Demonstrations}
 
 \subsection{Deadlines}
 
 \subsection{Feedback}
+
+\section{Performance of Hardware Virtualization}
+
+\subsection{Comparison -- is it worth?}
 
 \chapter{Conclusion}
 A review of state-of-the-art technologies provided valuable insights into popular solutions suitable for building a CTF platform. The development process followed an extreme programming approach, adapting to emerging needs as the project evolved. The platform's infrastructure is based on OSS, with the only custom-developed component being the Deployer Backend. While integrating OSS is not always easier than developing software from scratch, it significantly reduces time and effort and offers the advantage of community-driven maintenance.
