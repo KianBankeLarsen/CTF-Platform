@@ -1049,10 +1049,12 @@ Most development occurs within the application stack, and deploying recent chang
 Another notable behavior is that the CTFd image is rebuilt even when no actual changes have been made. This occurs because the context specified in Pulumi is too broad due to the folder structure. Since the context encompasses the entire \texttt{/src/application} directory, any minor modifications within that directory trigger an unnecessary rebuild. While this does not introduce functional issues, it results in unnecessary build time during stack update.
 
 \section{BADM500 Lecture Demonstrations}
+Developing a platform for actual users within a team environment has been highly motivating. Throughout the project, the platform was demonstrated to the BADM500 class to showcase its functionality. While students did not provide direct feedback, their use of the platform effectively served as a test, providing insights into the functionality of self-registration and challenge submission. One student identified an issue where challenges larger than 1 MB were unsupported due to a limitation in the NGINX ingress resource, which was promptly addressed. A similar issue had previously arisen during the implementation of the Docker registry, reinforcing the importance of thorough testing. Many issues are straightforward to resolve once identified, but maintaining test cases ensures platform reliability. Canary testing remains an effective method for verifying proper system functionality and detecting early-stage failures.
 
-\subsection{Deadlines}
+Platform demonstrations were conducted multiple times with distinct objectives. The first demonstration, held in February, introduced the platform as part of the bachelor project description to provide students with an overview of the upcoming work. The second demonstration in March focused on the solution category of the exposed endpoints. The third demonstration in April primarily served as a follow-up, though I was not personally involved. The fourth demonstration in May, integrated into ongoing meetings with the bachelor students, was particularly valuable, as students could interact with the platform directly.
 
-\subsection{Feedback}
+The MVP can be considered successful, but further development remains. Additional administrative endpoints are necessary, while students already have access to the required functionality. Some code requires refactoring for maintainability, which aligns with an agile or iterative development model.
+
 
 \section{Performance of Hardware Virtualization}
 
