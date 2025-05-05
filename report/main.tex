@@ -93,7 +93,7 @@ To address these challenges, this project builds upon Henrik's work with the CTF
 This thesis explores open-source software (OSS) to develop a CTF platform that is easy to deploy and maintain, providing a minimal viable product (MVP) for hosting CTF competitions. The key contributions are:
 
 \begin{itemize}
-    \item Players can start and stop test environments on demand and verify their status through the API or CTFd.
+    \item Players can start and stop test environments on demand and check their verification through the API or CTFd.
     \item The platform supports both VMs and containers, with a feature flag controlling the selection.
     \item Keycloak provides Single Sign-On (SSO), authentication, and role-based access control.
     \item Grafana, Prometheus, Loki, and Promtail facilitate metrics collection, logging, and system monitoring.
@@ -529,7 +529,7 @@ The trusted TLS certificate could have been managed at the ingress controller in
 
 The remaining architectural details will be covered in their respective sections, as they pertain to platform functionality rather than system architecture. The \textit{services} box in Figure \ref{fig:architecture} represents the core components of the platform, while all other elements ensure secure access to these services for users.
 
-Migrating this architecture to GCP simplifies the setup significantly. In fact, everything outside the UCloud Kubernetes box in Figure \ref{fig:architecture} can be removed. With this change, SSLH serves as the new entry point, eliminating both the network overlay and the additional proxy forward. 
+Migrating this architecture to GCP simplifies the setup significantly. In fact, everything outside the UCloud Kubernetes box in Figure \ref{fig:architecture} can be removed. With this change, SSLH serves as the new entry point, eliminating both the network overlay and the additional proxy forward. Be aware that SSLH cannot be exposed on a privileged port. Something needs to redirect traffic from port 80 and 443 to SSLH.
 
 \subsection{Storage}
 
@@ -566,7 +566,7 @@ High coherence and low coupling are vital for effective stack design. While it i
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=.5\textwidth]{images/pulumi_stacks.png}
+    \includegraphics[width=.45\textwidth]{images/pulumi_stacks.png}
     \caption{Pulumi Stacks Relationship. An arrow pointing from a source to a target indicates that the source depends on the target. Given the layered approach, these relationships are transitive. However, arrows targeting certificates are explicitly included due to their significance.}
     \label{fig:pulumi_stacks}
 \end{figure}
@@ -643,7 +643,7 @@ Generating secrets during deployment ensures fresh credentials with each update 
 
 In a monolithic stack, all information is already available within the same stack. When using a micro-stack architecture, it may be necessary to share information between stacks. Stack references make this possible by allowing one stack to access outputs from another, such as randomly generated secrets, or other stack-specific data. This enables generating all secrets in the Infrastructure stack and exporting them to the services that need them.
 
-\subsection{Helm Charts}
+\subsection{Helm Charts}\label{sec:helm_crds}
 Pulumi offers two approaches for deploying Helm charts: as a \texttt{Chart} \Parencite{PulumiHelmChart} or a \texttt{Release} \Parencite{PulumiHelmRelease}. The key difference lies in how Pulumi manages these resources. When using \texttt{Chart}, Pulumi treats all resources within the chart as its own, incorporating them into its state. Conversely, the \texttt{Release} option deploys the Helm chart as a release, meaning the resources are not tracked in Pulumi's state and are managed independently. This approach is useful for charts intended to be managed outside of Pulumi or when keeping the Helm release separate from a Pulumi stack.
 
 One important consideration is that Helm hooks are no longer supported in Pulumi Charts v4. While Chart v3 also lacked hook support, it historically emitted hooks as ordinary child resources. Another notable improvement in Chart v4 is enhanced resource ordering \Parencite{PulumiKubernetesChartV4}. For example, in Chart v3, deploying \texttt{kube-prometheus-stack} was problematic because services dependent on CRDs were created before the CRDs themselves were available. This required manually installing the CRDs within the Infrastructure stack. Chart v4 eliminates this workaround by handling resource ordering automatically. However, the CRDs remain in the Infrastructure stack for flexibility, ensuring availability for other stacks beyond Monitoring -- \texttt{ServiceMonitors}, for example, are widely used across different stacks.
@@ -828,10 +828,136 @@ Similar to the CLI job, the provider interacts with Keycloak's REST API. However
 A key drawback of realm files is that they can become outdated with newer Keycloak versions, an issue encountered multiple times during this project's development. While incorporating Pulumi for authentication would offer long-term benefits, it was not implemented in this project due to time constraints.
 
 \section{Monitoring}
+Monitoring should be simple and accessible to ensure adoption. Once set up, all relevant data must be readily available. A centralized entry point eliminates the need for manual data aggregation when assessing the Kubernetes cluster's health.
 
-\subsection{Technology Stack}
+This implementation leverages Grafana and Prometheus, widely used monitoring tools. However, additional components are required, as detailed in section \ref{sec:technology_stack}.
 
-\subsection{Service Monitors}
+\subsection{Technology Stack}\label{sec:technology_stack}
+This section explores tools from the Grafana and Prometheus communities used to monitor the Kubernetes cluster. To ensure comprehensive metric collection, various components are employed to gather logs and scrape cluster-provided endpoints. Below is an overview of the key tools:
+
+\begin{enumerate}
+    \item \textbf{Promtail}: An agent that discovers targets, attaches labels, and forwards local logs to a Loki instance.
+    \item \textbf{Loki}: A scalable log aggregation system focused on indexing metadata rather than full log text, designed for cost efficiency.
+    \item \textbf{Prometheus}: A time-series monitoring and alerting toolkit that collects and stores metrics with timestamps.
+    \item \textbf{Grafana}: A visualization platform for querying, analyzing, and alerting on metrics from various data sources.
+    \item \textbf{Kubelet and cAdvisor Scraping}: Collects container resource usage and performance metrics from kubelet-hosted cAdvisor.
+    \item \textbf{Kubernetes Controller Manager Scraping}: Gathers metrics from the controller manager to track cluster state management.
+    \item \textbf{CoreDNS/kubeDNS Scraping}: Monitors DNS-based service discovery within the cluster.
+    \item \textbf{etcd Scraping}: Retrieves metrics from etcd, the distributed key-value store backing Kubernetes cluster data.
+    \item \textbf{Kubernetes Scheduler Scraping}: Collects scheduling metrics to monitor pod assignments.
+    \item \textbf{Kube Proxy Scraping}: Captures network-related metrics.
+    \item \textbf{Kube State Metrics Scraping}: Extracts Kubernetes object metrics, including deployments, nodes, and pods.
+    \item \textbf{Node Exporter Deployment}: Runs as a daemonset on all nodes to expose hardware and OS metrics.
+    \item \textbf{Prometheus Operator}: Simplifies the deployment and management of Prometheus and related monitoring components.
+\end{enumerate}
+
+To achieve comprehensive monitoring, both active (intrusive) and passive (non-intrusive) techniques are utilized. Active monitoring modifies application code to record metrics and send them to logging systems, providing detailed insights but introducing overhead. Passive monitoring, in contrast, collects system-level metrics without altering applications, offering a broad yet generalized view. For example, intrusive monitoring includes exposing metrics endpoints in Loki or Prometheus, while passive monitoring is exemplified by cAdvisor within the Kubelet, which tracks container resource usage without application awareness. Combining both methods results in a balanced and effective monitoring strategy.
+
+\subsection{Grafana}
+This section describes the configuration process, focusing on integrating Keycloak and loading dashboards.
+
+Grafana integrates with Keycloak using OAuth2 and OIDC \parencite{GrafanaKeycloak}. Figure \ref{fig:grafana_oauth} illustrates the Grafana OAuth2 configuration. Key fields are discussed in the following paragraphs.
+
+\begin{figure}[h]
+    \centering
+\begin{minted}{javascript}
+{
+    "auth.generic_oauth": {
+        enabled: true,
+        use_pkce: true,
+        allow_sign_up: true,
+        use_refresh_token: true,
+        role_attribute_strict: true,
+        client_secret: GRAFANA_CLIENT_SECRET,
+        scopes: "openid",
+        client_id: "grafana",
+        name: "Keycloak-OAuth",
+        name_attribute_path: "name",
+        email_attribute_path: "email",
+        id_token_attribute_name: "access_token",
+        login_attribute_path: "preferred_username",
+        token_url: `${keycloakIntern}/realms/ctf/protocol/openid-connect/token`,
+        auth_url: `${keycloakExtern}/realms/ctf/protocol/openid-connect/auth`,
+        api_url: `${keycloakExtern}/realms/ctf/protocol/openid-connect/userinfo`,
+        signout_redirect_url: `${keycloakExtern}/realms/ctf/protocol/openid-connect/logout`,
+        role_attribute_path: "contains(resource_access.grafana.roles, 'admin') && 'Admin' || contains(resource_access.grafana.roles, 'editor') && 'Editor' || contains(resource_access.grafana.roles, 'viewer') && 'Viewer' ||  ''"
+    }
+}
+\end{minted}
+    \caption{Grafana OAuth2 configuration.}
+    \label{fig:grafana_oauth}
+\end{figure}
+
+Key endpoints include authorization, token, user info, and logout. Setting \texttt{id\_token\_attribute\_name} to \texttt{access\_token} allows Grafana to use the access token for authorization, eliminating the need for additional client mappers required by the default ID token \parencite{grafana_oauth}. Otherwise, Grafana would be unable to locate client roles. This approach simplifies the configuration by leveraging existing access token data.
+
+Grafana uses the \texttt{sub} claim as the user's unique identifier, which can be changed to the email by enabling \texttt{oauth\_allow\_insecure\_email\_lookup}. This setting is typically used when authenticating against different identity providers \parencite{grafana_authentication}. During a Keycloak version upgrade in the initial implementation, the \texttt{basic} scope, containing the \texttt{sub} claim, was not applied by default, causing synchronization issues. This workaround was temporarily implemented while trying to understand the root cause. The final implementation uses the \texttt{sub} claim.
+
+Refresh tokens maintain user sessions without requiring frequent re-authentication. While the documentation lacks clarity, it is assumed that the session follows the refresh token mechanism unless explicitly configured otherwise.
+
+Role mapping in Grafana is achieved using JMESPath, a query language for JSON. The \texttt{role\_attribute\_path} configuration extracts and maps roles from the Keycloak token to Grafana roles, ensuring accurate user permissions.
+
+Authorization Code Flow with Proof Key for Code Exchange (PKCE) enhances security by mitigating authorization code interception attacks through a code verifier and code challenge \parencite{auth0_pkce}. Since both Grafana and Keycloak support this feature, enabling it is straightforward.
+
+The Grafana implementation installs dashboards using \texttt{curlimages/curl} or by uploading through the Grafana API. Both approaches are automated within the Helm chart and straightforward to configure. Dashboards are downloaded via \texttt{curl} by specifying a dashboard provider as the top-level key within \texttt{dashboard\allowbreak Providers}, followed by an internal dashboard name and the necessary parameters to fetch a specific dashboard. Figure \ref{fig:grafana_dashboard} illustrates this configuration. The \texttt{gnetId} represents the Grafana dashboard ID, \texttt{revision} specifies the version number, and \texttt{datasource} defines the default data source used by the dashboard.
+
+\begin{figure}[h]
+    \centering
+\begin{minted}{JSON}
+"dashboardProviders": {
+    "grafana-dashboards-kubernetes": {
+        "k8s-views-nodes": {
+            "gnetId": 15759,
+            "revision": 29,
+            "datasource": "Prometheus"
+        },
+    },
+}
+\end{minted}
+    \caption{Grafana dashboard configuration.}
+    \label{fig:grafana_dashboard}
+\end{figure}
+
+The second option relies on the \texttt{kiwigrid/k8s-sidecar} sidecar container, which collects \texttt{ConfigMaps} with a specified label and stores the included files in the respective directories. The label is defined using \texttt{sidecar.dashboard.label}, enabling Helm charts to prepare and emit dashboards suited to their metrics.
+
+The installed dashboards are categorized into the following three directories: \texttt{Kube Prometheus Stack}, \texttt{Kubernetes} and \texttt{Node}. The sidecar container dashboards are installed into the \texttt{Kube Prometheus Stack} directory.
+
+\subsection{Service \& Pod Monitors}
+This section defines \texttt{ServiceMonitor} and compares it with \texttt{PodMonitor}. These monitors dynamically manage scrape targets, enabling the collection of metrics from services and pods. Without these CRDs, Prometheus' configuration would require manual updates whenever a new service or pod is introduced.
+
+A \texttt{ServiceMonitor} is a CRD that specifies how groups of services should be monitored. It enables Prometheus to scrape metrics from services by defining endpoints and selectors. Figure \ref{fig:servicemonitor_example} shows an example of a \texttt{ServiceMonitor} definition in TypeScript Pulumi.
+
+\begin{figure}[h]
+    \centering
+\begin{minted}{typescript}
+new k8s.apiextensions.CustomResource("<resource>", {
+    apiVersion: "monitoring.coreos.com/v1",
+    kind: "ServiceMonitor",
+    metadata: {
+        namespace: "<namespace>",
+        labels: { release: "<releaseName>" }
+    },
+    spec: {
+        endpoints: [{ 
+            interval: "30s", 
+            port: "<DNSLabel>" 
+        }],
+        selector: { matchLabels: appLabels }
+    }
+})
+\end{minted}
+    \caption{Example \texttt{ServiceMonitor} definition.}
+    \label{fig:servicemonitor_example}
+\end{figure}
+
+This configuration instructs Prometheus to scrape metrics every 30 seconds from a specified port, using labels to identify monitored services.
+
+When defining a \texttt{ServiceMonitor}, it is important to consider the release label. The Prometheus Operator only discovers Service Monitors and Pod Monitors within its release. By default, it searches across all namespaces, but the Prometheus instance itself only adds scraping targets for monitors in its own namespace. This can be changed by modifying the namespace selector on the Helm chart.
+
+Endpoints in a \texttt{ServiceMonitor} can be defined using either \texttt{port} or \texttt{targetPort}. The \texttt{port} must be a DNS label referring to a named port in a service, whereas \texttt{targetPort} can be an integer or string representing the target port of the corresponding \texttt{Pod}. The \texttt{port} must match the container's port property.
+
+While \texttt{ServiceMonitor} is used for monitoring services, \texttt{PodMonitor} is designed for monitoring pods. All aspects covered in this section have been validated through experimentation. The current implementation utilizes monitors provided by Helm charts.
+
+Some dashboards require a \texttt{cluster} label to be configured. The only apparent way to achieve this is by adding \texttt{metricRelabelings} or \texttt{relabelings} to 14 scrape targets. The key difference between these configurations is that metric relabeling applies to samples after scraping but before ingestion, whereas relabeling applies before scraping. Why the implementation cannot rely solely on metric relabelings remains unclear. The added cluster label is named ``SDU-CTF''. However, some dashboards still experience issues, as they require the metrics to include a label called \texttt{image}, which is missing.
 
 \subsection{Non-Intrusive Logging}
 
@@ -957,7 +1083,7 @@ Another issue arose when the image was stored in a GitLab-hosted container regis
 A more maintainable solution would have used NixOS, as outlined in the state-of-the-art, to define the Alpine VM declaratively. This method would have ensured transparency, reproducibility, and simplified modifications. A declaratively defined VM eliminates the need for external image storage, as it can be built dynamically during deployment.
 
 \subsection{Logging} 
-Logging is an essential component of any system, ensuring developers have access to crucial logs when issues arise. The current implementation scrapes logs from a specific container within a pod. Henrik's initial approach correctly retrieved pod logs, but they were not exposed by the VM. This limitation was later resolved by Matteo Trentin, and the logging functionality was further extended by the author of this thesis to support container-level log retrieval.
+Logging is an essential component of any system, ensuring developers have access to crucial logs when issues arise. The current implementation scrapes logs from a specific container within a pod. Henrik's initial approach correctly retrieved pod logs, but they were not exposed by the VM. This limitation was later resolved by Matteo Trentin, and the logging functionality was further extended by the author of this thesis to support container-level log retrieval. With the extra endpoint, logs remain inaccessible to the host from the inner Docker Daemon. Therefore, a similar approach must be applied to containers as well.
 
 Designed with a focus on administrative insights, the monitoring system has demonstrated the effectiveness of non-intrusive logging through Promtail and Loki. Promtail collects container logs and forwards them to Loki, which persists them for later access. Relying on direct pod log scraping presents challenges, as logs are only accessible while the pod is running. If a pod crashes or is deleted upon completion, its logs become unavailable, complicating troubleshooting for platform users.
 
@@ -982,18 +1108,19 @@ The challenges endpoint for listing submitted challenges was too restrictive, al
 
 The API requires multiple files when adding a challenge: \texttt{challenge.yml}, \texttt{src.zip}, and \texttt{solution.zip}. Ideally, the request should have accepted a single zip file containing all necessary components. Initially, separating \texttt{challenge.yml} and \texttt{src.zip} aligned with how cloud-init processes files for the VM. When extending the API to support solutions, adding another file to the request was the most straightforward approach given the existing code structure. However, modifying the implementation to accept a single zip and distribute the files internally would have been a better solution.
 
-The backend currently requires users to send an access token in the request header for authentication. A more user-friendly approach would have been to support basic authentication with a username and password, allowing the API to request a token from Keycloak using the Resource Owner Password Credentials grant. This change would also have allowed the Keycloak client to be confidential, enabling internal authentication for specific endpoints. Implementing internal authentication now would require an additional client. The solution verification endpoint, in particular, would benefit from internal authentication, as it does not need direct exposure to users; only solution VMs should submit a flag for a solution. While users could still misuse this functionality, requiring all verified challenges to originate from a solution VM would provide a safeguard.
+The backend currently requires users to send an access token in the request header for authentication. A more user-friendly approach would have been to support basic authentication with a username and password, allowing the API to request a token from Keycloak using the Resource Owner Password Credentials grant. This change would also have allowed the Keycloak client to be confidential, enabling internal authentication for specific endpoints. Implementing internal authentication now would require an additional client. The solution verification endpoint, in particular, would benefit from internal authentication, as it does not need direct exposure to users; only solution VMs should submit a flag for a solution. While users could still misuse this 
+functionality, requiring all verified challenges to originate from a solution VM would provide a safeguard.
+
+Standardizing responses in the backend would improve consistency. The \texttt{start} and \texttt{status} endpoints do not return the same fields, but aligning them may be beneficial. A more efficient approach would be to use the \texttt{start} endpoint to initiate a challenge and also serve as the \texttt{status} endpoint once the challenge has started. Since both endpoints operate on the same challenge ID, separating them serves no clear purpose. Additionally, the \texttt{status} endpoint could be improved by verifying the readiness of multiple containers (including sidecars) rather than only assessing the container running the compose file. It has been verified that the \texttt{compute} container utilizes the probe configured for the VM. Previously, it was assumed that this was incorrect, as the VM runs as \texttt{virtualmachine.kubevirt.io/challenge}. Yet, the \texttt{compute} container and the VM share the same readiness status.
 
 \subsection{Missing Features}
-Although readiness probes have been implemented, the backend does not use them to verify whether a challenge is operational. Instead, it immediately returns \texttt{started: true} once the resources are created. This is technically accurate, as the instance is indeed started; however, the \texttt{status} and \texttt{start} endpoints would benefit from an additional field indicating whether the VM or container is ready to receive traffic. This would prevent users from repeatedly attempting to access the challenge to check its availability.
-
 Resource availability is limited. Currently, only one solution can run per challenge, and each user can run only one challenge at a time. However, users who have submitted multiple challenges lack visibility into which one has been started or whether any have been initiated. Introducing an endpoint to retrieve running instances would address this issue. Additionally, challenges and tests are subject to automatic termination after a predefined duration. While this restriction is generally acceptable, administrators might need the ability to manually terminate a challenge before its expiration. However, this is currently not possible, as only the user who started the challenge can stop it. This limitation arises because the request's user ID is used to identify the corresponding namespace for deletion.
 
 \section{Bastion}
 The bastion host is the sole entry point for users accessing environments via SSH, making security a top priority. While using Alpine with most features disabled provides a strong foundation for hardening. This section examines the impact of a shared user model and alternative authentication methods beyond SSH certificates.
 
 \subsection{A Single User}
-Initially, the goal was for each platform user to have an individual account on the bastion, aligning with the inclusion of their email’s local part as an SSH certificate principal. At the time, role-to-principal mapping was not understood. While automatic user creation introduces challenges in tracking, sharing a single account is also problematic due to monitoring difficulties and the risk of shell access, despite security measures.
+Initially, the goal was for each platform user to have an individual account on the bastion, aligning with the inclusion of their email's local part as an SSH certificate principal. At the time, role-to-principal mapping was not understood. While automatic user creation introduces challenges in tracking, sharing a single account is also problematic due to monitoring difficulties and the risk of shell access, despite security measures.
 
 To implement automatic user creation, I attempted a solution using \texttt{libnss\_shim} \parencite{libnss_shim}, an adapter that simplifies Name Service Switch (NSS), but installation on Alpine was unsuccessful. An alternative approach using a custom NSS configuration also failed. Implementing SSH \texttt{ForceCommand} and \texttt{AuthorizedKeysCommand} proved ineffective, as users were rejected before either command could execute. The intended method was to map nonexistent users to unique UIDs and create home directories, potentially using \texttt{pam\_mkhomedir.so} \parencite{pam_mkhomedir}. However, due to these limitations, sharing a single account on the bastion is currently the most viable approach, supported by the following configurations: 
 
@@ -1055,7 +1182,6 @@ Platform demonstrations were conducted multiple times with distinct objectives. 
 
 The MVP can be considered successful, but further development remains. Additional administrative endpoints are necessary, while students already have access to the required functionality. Some code requires refactoring for maintainability, which aligns with an agile or iterative development model.
 
-
 \section{Performance of Hardware Virtualization}
 
 \subsection{Comparison -- is it worth?}
@@ -1075,177 +1201,10 @@ The Deployer Backend has been enhanced to support solutions -- automated tests t
 
 The platform is designed to rely on the PKI for certificate management, strictly for internal components rather than user-facing interactions. While users can manually trust these certificates, this was never the intended approach. Due to DNS provider limitations preventing automated wildcard certificate requests, proving domain ownership via \texttt{HTTP01} challenges is simpler than using \texttt{DNS01} challenges. Consequently, Certbot and NGINX were implemented to automate certificate requests for known domains, such as the main domain and the deployer subdomain. This solution was preferred over modifying ingress configurations between development and production environments, as placing a proxy in front of the platform offers a more elegant and maintainable approach. As a result, automatically generated subdomains for challenges are configured to use PKI-issued certificates, which users can manually configure their systems to trust by adding the PKI's root certificate to their trusted certificate store.
 
-Future development of the platform includes improving log retrieval by replacing direct pod scraping with persisted logs in Loki, ensuring users can access logs even after challenges or solutions have stopped running. Additionally, an authentication hook for Unleash will be implemented, allowing users to authenticate with their Keycloak credentials. While the Deployer Backend provides the necessary functionality, its current implementation is difficult to extend and may require a refactor for better flexibility and maintainability. Using NixOS for VM disk image creation and Pulumi for provisioning the Keycloak realm and clients would enhance automation and infrastructure management, while also allowing Pulumi to replace Terraform, simplifying the technology stack and reducing the number of required tools.
+Future development of the platform includes improving log retrieval by replacing direct pod scraping with persisted logs in Loki, ensuring users can access logs even after challenges or solutions have stopped running. The patch for exposing logs on VMs should also be applied to containers. Additionally, an authentication hook for Unleash will be implemented, allowing administrators to authenticate with their Keycloak credentials. While the Deployer Backend provides the necessary functionality, its current implementation is difficult to extend and may require a refactor for better flexibility and maintainability. Using NixOS for VM disk image creation and Pulumi for provisioning the Keycloak realm and clients would enhance automation and infrastructure management, while also allowing Pulumi to replace Terraform, simplifying the technology stack and reducing the number of required tools.
 
 \cleardoublepage
 \phantomsection
 \addcontentsline{toc}{chapter}{References}
 \printbibliography
 \end{document}
-
-\section{A Single Entry Point}
-Monitoring should be straightforward; otherwise, people will not use it! While the initial setup requires some effort, once it is running, all data should be readily available. Therefore, we want all our monitoring to be accessible from a single entry point, so that responsible personnel will not have to aggregate multiple sources to make a rational conclusion about the Kubernetes cluster's health.
-
-To achieve this single entry point, we will use the AIOps tool Grafana. Originally created as a fork of Kibana in 2014, Grafana has since specialized in integrating compatibility with multiple data sources, whereas Kibana is primarily compatible with Elasticsearch. Grafana's ability to support multiple data sources makes it a flexible and future-proof solution.
-
-As a starting point, we will configure Prometheus, Loki, and possibly some databases as data sources. Prometheus is a time series database that collects various metrics. Loki is a system that collects and organizes log data for easy searching and viewing. The purpose of registering databases will primarily be for querying purposes, similar to tools like Adminer.
-
-However, data sources alone will not suffice. As the name suggests, they are simply sources. The data needs to come from somewhere. Prometheus depends on Service Monitors or Pod Monitors to gather metrics, and Loki similarly relies on a log gatherer to collect and organize log data. Without these components, the data sources would remain empty and ineffective. Let us further explore the remaining tool stack in section \ref{sec:monitoring_stack}.
-
-\section{The Technology Stack}\label{sec:monitoring_stack}
-In this section, we will explore the use of tools developed by the Grafana and Prometheus community to monitor our Kubernetes cluster. To ensure comprehensive metric sampling, we will utilize various components to collect logs and scrape endpoints provided by the Kubernetes cluster. Below is an overview of the tools we will be using:
-
-\begin{enumerate}
-    \item \textbf{Promtail}: Promtail is an agent that ships the contents of local logs to a Loki instance. It is responsible for discovering targets, attaching labels, and pushing logs to the Loki instance.
-    \item \textbf{Loki}: Loki is a horizontally-scalable, highly-available log aggregation system inspired by Prometheus. It is designed to be cost-effective and easy to operate, focusing on indexing metadata rather than the full text of the logs.
-    \item \textbf{Prometheus}: Prometheus is an open-source systems monitoring and alerting toolkit. It collects and stores metrics as time series data, recording information with a timestamp.
-    \item \textbf{Grafana}: Grafana is an open-source platform for monitoring and observability. It provides tools to query, visualize, alert on, and understand your metrics no matter where they are stored.
-    \item \textbf{Component scraping the kubelet and kubelet-hosted cAdvisor}: This component scrapes metrics from the kubelet and cAdvisor, which provide information about the resource usage and performance of containers.
-    \item \textbf{Component scraping the kube controller manager}: This component collects metrics from the Kubernetes controller manager, which manages the state of the cluster.
-    \item \textbf{Component scraping CoreDNS or kubeDNS}: This component gathers metrics from CoreDNS or kubeDNS, which are responsible for DNS-based service discovery in the cluster.
-    \item \textbf{Component scraping etcd}: This component scrapes metrics from etcd, the key-value store used as Kubernetes' backing store for all cluster data.
-    \item \textbf{Component scraping the kube scheduler}: This component collects metrics from the Kubernetes scheduler, which assigns pods to nodes.
-    \item \textbf{Component scraping the kube proxy}: This component gathers metrics from the kube proxy, which maintains network rules on nodes.
-    \item \textbf{Component scraping kube state metrics}: This component collects metrics about the state of the Kubernetes objects, such as deployments, nodes, and pods.
-    \item \textbf{Deploy node exporter as a daemonset to all nodes}: Node exporter runs on each node to expose hardware and OS metrics.
-    \item \textbf{Prometheus Operator}: The Prometheus Operator simplifies the deployment and management of Prometheus and related monitoring components.
-\end{enumerate}
-
-The scraping components consist of a service, an associated service monitor, and in some cases, an Endpoints resource. These components are crucial for gathering metrics from various parts of the Kubernetes cluster.
-
-To ensure comprehensive monitoring, we employ both active (intrusive) and passive (non-intrusive) monitoring techniques. Active monitoring involves modifying code to record specific metrics and send information to a logging system, which provides detailed, application-specific insights but adds some overhead. Passive monitoring, on the other hand, collects metrics from the system running the container or VM without modifying the application, offering a broader but more generic view. An example of intrusive monitoring is the metrics endpoint on Loki or Prometheus, while passive monitoring is exemplified by the CAdvisor integrated into the Kubelet, which monitors container resource usage without the containers being aware. By combining both methods, we achieve a balanced and effective monitoring strategy.
-
-As mentioned in the introduction, we have decided to rely primarily on Helm charts when possible. Grafana and Prometheus provide and maintain excellent Helm charts that include features such as horizontal scaling, network policies, and cluster roles. These resources would be complex to create ourselves, so it is beneficial to leverage these pre-built charts.
-
-However, Helm charts are designed to bundle resources, which raises the question of what should be bundled together. For instance, if Grafana is included in multiple Helm charts, which chart should be responsible for deploying it? In this project, we have decided that Helm charts should be as minimal as possible. If it is straightforward to create the integrations ourselves, that is our preferred approach. Helm charts created for specific services, rather than large bundles, are usually easier to configure and comprehend. Moreover, Helm charts targeting deeper integrations align better with our goal of low coupling and high cohesion. Being less dependent on complex charts makes it easier to add or remove services later, allowing us to stay agile and less committed to existing developments.
-
-We utilized several Helm charts to streamline the deployment and management of our monitoring tools. From the Grafana Helm chart repository (\url{https://grafana.github.io/helm-charts}), we used the charts for Grafana, Loki, and Promtail. Additionally, from the Prometheus Community Helm chart repository (\url{https://prometheus-community.github.io/helm-charts}), we employed the kube-prometheus-stack chart.
-
-While considering log shipping solutions, we evaluated both Promtail and Fluent Bit. Promtail is known for its seamless integration with Loki, making it an ideal choice for Kubernetes environments. On the other hand, Fluent Bit offers high performance and flexibility, capable of forwarding logs to multiple destinations. Ultimately, we chose Promtail for its simplicity and compatibility within the Loki ecosystem, which aligns with our goal of maintaining a cohesive and efficient monitoring setup.
-
-\section{Sidecar Container}
-In Kubernetes, sidecar containers are a design pattern where an additional container runs alongside the main application container within the same pod. This pattern extends the functionality of the main application without modifying its code. A common use case for sidecar containers is dynamically loading dashboards into Grafana. This approach is particularly advantageous because it avoids unnecessary rolling updates of Grafana, making it super easy to configure new dashboard resources. For example, if using an external Helm chart with their own custom dashboards for Grafana, made for their service, then the dashboards are easily deployed, as there is no need to change the configuration of the currently running Grafana instance. To achieve this, \texttt{ConfigMaps} containing the dashboards must be labeled appropriately, such as with the label \texttt{grafana\_dashboard}. These \texttt{ConfigMaps} should include key-value pairs where the key is the filename and the value is the JSON content of the dashboard.
-
-The sidecar container used for this purpose is typically based on a general-purpose image like \texttt{kiwigrid/k8s-sidecar}. This container continuously scans for \texttt{ConfigMaps} with the specified label and loads them into Grafana using Grafana's public API. The sidecar container is configured with environment variables that specify how to interact with Grafana, including the Grafana URL and an API key for authentication. The API key is usually stored in a Kubernetes Secret and mounted into the sidecar container.
-
-The sidecar container works by continuously scanning the Kubernetes API for \texttt{ConfigMaps} labeled with \texttt{grafana\_dashboard}. When it detects a \texttt{ConfigMap} with this label, it reads the JSON content and stores it in a specified folder within the pod. The sidecar then uses Grafana's public API to import the dashboards, ensuring that any new or updated dashboards are automatically loaded into Grafana without manual intervention. This approach allows for dynamic management of Grafana dashboards, making it easier to update and maintain them as part of a Kubernetes deployment.
-
-Similar features have been prepared for automatically adding scraping targets to Prometheus. These are known as Service Monitors or Pod Monitors, which will be described in the following two sections.
-
-\section{Custom Resource Definition}
-In Kubernetes, when the default resources do not meet specific requirements, it is possible to define custom resources to extend the functionality of the cluster. This capability is leveraged by the Prometheus community to introduce a set of Custom Resource Definitions (CRDs) that facilitate advanced monitoring configurations. These CRDs enable the seamless integration and management of Prometheus and related components within a Kubernetes environment. Although not all CRDs are utilized in every deployment, they are included due to their lightweight nature and the complexity involved in selectively disabling them. The Helm chart containing these CRDs is part of the kube-prometheus-stack.
-
-The primary CRDs introduced by the Prometheus community include:
-
-\begin{enumerate}
-    \item \textbf{Prometheus}: Defines a Prometheus instance, allowing configuration of replicas, persistent storage, and alerting mechanisms.
-    \item \textbf{Alertmanager}: Manages \texttt{Alertmanager} instances, which handle alerts sent by Prometheus and support high availability configurations.
-    \item \textbf{ThanosRuler}: Sets up Thanos Ruler instances for processing recording and alerting rules across multiple Prometheus instances.
-    \item \textbf{ServiceMonitor}: Specifies how a set of services should be monitored, including endpoints and scraping intervals.
-    \item \textbf{PodMonitor}: Similar to \texttt{ServiceMonitor}, but specifically targets pods for monitoring.
-    \item \textbf{Probe}: Defines blackbox probing configurations to monitor endpoints from an external perspective.
-    \item \textbf{PrometheusRule}: Manages Prometheus recording and alerting rules.
-    \item \textbf{AlertmanagerConfig}: Configures \texttt{Alertmanager} settings, such as routing and notification templates.
-    \item \textbf{PrometheusAgent}: Sets up a lightweight Prometheus Agent instance for scraping and forwarding metrics.
-    \item \textbf{ScrapeConfig}: Provides additional scraping configurations for Prometheus instances.
-\end{enumerate}
-
-The Prometheus Operator periodically scans for \texttt{ServiceMonitors}, which define how services should be monitored. Upon discovery, the operator updates Prometheus with the new scraping targets. This allows services exposing metrics in a text-based exposition format to be dynamically added to Prometheus without modifying its configuration or triggering a rolling update. This approach enhances flexibility and reduces operational overhead in maintaining the monitoring setup.
-
-These CRDs facilitate the Kubernetes-native deployment and management of Prometheus and its ecosystem, streamlining the setup and maintenance of an effective monitoring stack.
-
-Deploying the kube-prometheus-stack with Pulumi can sometimes result in failures when resources using a CRD type are detected before the CRD is created. Pulumi may mark these resources as failed after several attempts, an issue that does not occur with Helm. To mitigate this, we take advantage of the Helm chart's design, which allows individual components to be toggled. The CRDs are deactivated as part of the monitoring project but created as part of the fundamental configuration of the Kubernetes cluster.
-
-\section{Service Monitor}
-This section will delve into the definition and use of \texttt{ServiceMonitor}, while also comparing it with \texttt{PodMonitor}.
-
-A \texttt{ServiceMonitor} is a CRD that specifies how groups of services should be monitored. It allows Prometheus to scrape metrics from services by defining endpoints and selectors. Here is an example of how to define a \texttt{ServiceMonitor} using TypeScript:
-
-\begin{minted}{typescript}
-new k8s.apiextensions.CustomResource("<resource>", {
-    apiVersion: "monitoring.coreos.com/v1",
-    kind: "ServiceMonitor",
-    metadata: {
-        namespace: "<namespace>",
-        labels: {
-            release: "<releaseName>"
-        }
-    },
-    spec: {
-        endpoints: [{
-            interval: "30s",
-            port: "<DNSLabel>"
-        }],
-        selector: {
-            matchLabels: appLabels
-        }
-    }
-})
-\end{minted}
-
-In this example, the \texttt{ServiceMonitor} is configured to scrape metrics every 30 seconds from a specified port. The \texttt{selector} field uses labels to identify the services to monitor.
-
-When defining Service Monitors, it is crucial to consider the release label. The Prometheus Operator will only discover Service Monitors or Pod Monitors that are within its release. Additionally, by default, the Prometheus Operator is configured to discover monitors across all namespaces. However, the Prometheus instance itself will, by default, only add scraping targets for monitors that reside within its own namespace.
-
-When defining endpoints in a \texttt{ServiceMonitor}, you can specify either \texttt{port} or \texttt{targetPort}. The \texttt{port} must be a DNS label string referring to a named port defined in a service, while \texttt{targetPort} can be an integer or string representing the target port of the \texttt{Pod} object\footnote{The port must be specified with the container's port property.} behind the service.
-
-While \texttt{ServiceMonitor} is used to monitor services, \texttt{PodMonitor} is designed to monitor pods. Here are the key differences:
-
-\begin{itemize}
-    \item \textbf{ServiceMonitor}: Ideal for monitoring a group of pods behind a service. It simplifies the configuration by using service labels and is useful when you want to get a collective measure of the pods running behind a service.
-    \item \textbf{PodMonitor}: Suitable for monitoring individual pods directly. It is useful when you need to scrape metrics from specific pods without defining a service. For example, monitoring SQL exporters where you want to consistently scrape each pod's \texttt{/metrics} endpoint without being challenged by load balancing.
-\end{itemize}
-
-In summary, use \texttt{ServiceMonitor} when you have services managing multiple pods and need aggregated metrics. Use \texttt{PodMonitor} when you need detailed metrics from individual pods, especially when services are not defined or needed. Everything mentioned in this section has been tested through an experiment.
-
-\section{Integrations}
-The significance of Keycloak lies in its practical application. In the following sections, we will explore how Keycloak plays a crucial role in managing authentication for our services. Some open-source software, such as Grafana, allows for seamless integration with Keycloak, making the process straightforward. In contrast, other software solutions, like CTFd, require more effort to integrate. The specifics of these integrations will be detailed in the associated sections.
-
-\subsection{Grafana}\label{sec:grafana_auth}
-Integrating Grafana with Keycloak addresses the critical challenges of secure and efficient user authentication and authorization by leveraging standardized protocols. This section details the configuration process, focusing on protocol integration, PKCE, refresh tokens, role mapping, and the underlying protocols \parencite{GrafanaKeycloak}.
-
-\begin{minted}{javascript}
-{
-    "auth.generic_oauth": {
-        enabled: true,
-        use_pkce: true,
-        allow_sign_up: true,
-        use_refresh_token: true,
-        role_attribute_strict: true,
-        client_secret: GRAFANA_CLIENT_SECRET,
-        scopes: "openid",
-        client_id: "grafana",
-        name: "Keycloak-OAuth",
-        name_attribute_path: "name",
-        email_attribute_path: "email",
-        id_token_attribute_name: "access_token",
-        login_attribute_path: "preferred_username",
-        token_url: `${keycloakIntern}/realms/ctf/protocol/openid-connect/token`,
-        auth_url: `${keycloakExtern}/realms/ctf/protocol/openid-connect/auth`,
-        api_url: `${keycloakExtern}/realms/ctf/protocol/openid-connect/userinfo`,
-        signout_redirect_url: `${keycloakExtern}/realms/ctf/protocol/openid-connect/logout`,
-        role_attribute_path: "contains(resource_access.grafana.roles, 'admin') && 'Admin' || contains(resource_access.grafana.roles, 'editor') && 'Editor' || ''"
-    }
-}
-\end{minted}
-
-Grafana integrates with Keycloak using OAuth2 and OIDC. Key endpoints include the authorization endpoint, token endpoint, user info endpoint, and logout endpoint. By setting \texttt{id\_token\_attribute\_name} to \texttt{access\_token}, Grafana uses the access token for authorization, avoiding the need for additional client mappers required by the ID token used by default; otherwise, Grafana will not be able to find the client roles. This approach simplifies the configuration by utilizing the readily available information already in the access token.
-
-Grafana uses the \texttt{sub} claim as the unique identifier for the user. This can be changed to the email by setting \texttt{oauth\_allow\_insecure\_email\_lookup} to \texttt{true}. This option is typically used when authenticating with different identity providers. However, it is noteworthy that user synchronization issues may arise if the basic claim scope is missing \parencite{grafana_authentication}.
-
-PKCE enhances the security of the OAuth2 authorization code flow, particularly for public clients. It mitigates authorization code interception attacks by introducing a code verifier and code challenge. The client generates a code verifier and sends a hashed code challenge to the authorization server. Upon exchanging the authorization code for an access token, the client presents the original code verifier. This ensures that intercepted authorization codes cannot be used without the code verifier, significantly enhancing security.
-
-Refresh tokens maintain user sessions without frequent re-authentication. Upon initial login, both an access token and a refresh token are issued. The access token has a short lifespan, while the refresh token is long-lived. When the access token expires, the client uses the refresh token to obtain a new access token, ensuring continuous access and improving user experience while maintaining security.
-
-Role mapping in Grafana is achieved using JMESPath, a query language for JSON. The \texttt{role\_attribute\_path} configuration extracts and maps roles from the Keycloak token to Grafana roles. This path dynamically maps Keycloak roles to Grafana roles, ensuring accurate user permissions.
-
-Integrating Grafana with Keycloak for authentication provides a secure and efficient solution for managing user access in modern web applications. By leveraging OAuth2 and OIDC protocols, utilizing PKCE, implementing refresh tokens, and employing dynamic role mapping, this integration enhances security and user experience, ensuring that only authorized users can access sensitive data visualized in Grafana.
-
-
-\chapter{Certificate Management}
-
-It’s both. The CRD (Custom Resource Definition) StepIssuer defines how cert-manager interacts with the step issuer, and using cert-manager.io/v1 as the API version ensures that cert-manager processes the certificate request.
-
-The StepIssuer CRD is what allows cert-manager to understand and utilize Step Issuer-specific configurations. The apiVersion specifies that this CRD is part of cert-manager’s ecosystem, linking the certificate management workflow to the Step Issuer capabilities.
-
-So, it’s the combination of the StepIssuer CRD defining the step-issuer's specifics and the API version that ties it into cert-manager’s functionality.

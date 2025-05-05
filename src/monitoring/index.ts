@@ -42,6 +42,12 @@ const cleanedGrafanaPath = (GRAFANA_HTTP_RELATIVE_PATH !== '/' && GRAFANA_HTTP_R
 const BACKEND_API_POSTGRESQL =
     stackReference.requireOutput("backendApiPostgresql") as pulumi.Output<string>;
 
+const addClusterLabel = {
+    action: "replace",
+    targetLabel: "cluster",
+    replacement: "SDU-CTF"
+}
+
 /* --------------------------------- Grafana -------------------------------- */
 
 const grafanaIngressPathType = GRAFANA_HTTP_RELATIVE_PATH !== "/" ? "ImplementationSpecific" : "Prefix"
@@ -273,6 +279,9 @@ new k8s.helm.v3.Chart("grafana", {
             labels: {
                 release: kubePrometheusStackRelaseName
             },
+            metricRelabelings: [
+                addClusterLabel
+            ],
             scheme: "https",
             tlsConfig: {
                 caFile: "/var/run/step/ca.crt",
@@ -389,6 +398,9 @@ new k8s.helm.v4.Chart(kubePrometheusStackRelaseName, {
         },
         prometheus: {
             serviceMonitor: {
+                metricRelabelings: [
+                    addClusterLabel
+                ],
                 scheme: "https",
                 tlsConfig: {
                     caFile: "/var/run/step/ca.crt",
@@ -464,6 +476,65 @@ new k8s.helm.v4.Chart(kubePrometheusStackRelaseName, {
                         name: "step-issuer",
                     }
                 }
+            },
+            metricRelabelings: [
+                addClusterLabel
+            ]
+        },
+        kubeProxy: {
+            serviceMonitor: {
+                metricRelabelings: [
+                    addClusterLabel
+                ]
+            }
+        },
+        coreDns: {
+            serviceMonitor: {
+                metricRelabelings: [
+                    addClusterLabel
+                ]
+            }
+        },
+        kubeApiServer: {
+            serviceMonitor: {
+                metricRelabelings: [
+                    addClusterLabel
+                ]
+            }
+        },
+        kubelet: {
+            serviceMonitor: {
+                cAdvisorRelabelings: [
+                    {
+                        action: "replace",
+                        sourceLabels: [
+                            "__metrics_path__"
+                        ],
+                        targetLabel: "metrics_path"
+                    },
+                    addClusterLabel
+                ],
+                relabelings: [
+                    {
+                        action: "replace",
+                        sourceLabels: [
+                            "__metrics_path__"
+                        ],
+                        targetLabel: "metrics_path"
+                    },
+                    addClusterLabel
+                ],
+                // ? why cannot be probesMetricsRelabelings (same issue other places)
+                probesRelabelings: [
+                    {
+                        action: "replace",
+                        sourceLabels: [
+                            "__metrics_path__"
+                        ],
+                        targetLabel: "metrics_path"
+                    },
+                    addClusterLabel
+                ]
             }
         },
         "kube-state-metrics": {
@@ -484,6 +555,9 @@ new k8s.helm.v4.Chart(kubePrometheusStackRelaseName, {
             prometheus: {
                 monitor: {
                     enabled: true,
+                    relabelings: [
+                        addClusterLabel
+                    ],
                     http: {
                         scheme: "https",
                         bearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
@@ -525,7 +599,10 @@ new k8s.helm.v4.Chart(kubePrometheusStackRelaseName, {
                 secretName: nodeExporterCert.metadata.name,
             },
             prometheus: {
-                monitor: {
+                monitor: {       
+                    metricRelabelings: [
+                        addClusterLabel
+                    ],  
                     scheme: "https",
                     bearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
                     tlsConfig: {
@@ -672,6 +749,9 @@ new k8s.helm.v4.Chart("loki", {
                 labels: {
                     release: kubePrometheusStackRelaseName
                 },
+                metricRelabelings: [
+                    addClusterLabel
+                ],
                 scheme: "https",
                 tlsConfig: {
                     caFile: "/var/run/step/ca.crt",
@@ -752,6 +832,9 @@ new k8s.helm.v3.Chart("promtail", {
             labels: {
                 release: kubePrometheusStackRelaseName
             },
+            metricRelabelings: [
+                addClusterLabel
+            ],
             scheme: "https",
             tlsConfig: {
                 caFile: "/var/run/step/ca.crt",
