@@ -967,7 +967,7 @@ Promtail, deployed as a DaemonSet, collects container logs from each node and fo
 
 Promtail captures build logs and all container output sent to stdout and stderr. However, when using Docker-in-Docker (DinD), logs are encapsulated and not written to the containers directory despite being printed to stdout -- an observation based on experience.
 
-Installation is handled via the Promtail Helm chart \parencite{grafana_promtail_helm}, with Loki client configuration in the Values file. The most challenging aspect was setting up mTLS for secure authentication with Loki.
+Installation is handled via the Promtail Helm chart \parencite{grafana_promtail_helm}, with Loki client configuration in the Values file. The most challenging aspect was setting up mTLS for secure authentication with Loki. This is a lax implementation, relying solely on \texttt{VerifyClientCertIfGiven}.
 
 Grafana integrates Loki as a data source, enabling log querying and visualization through dashboards or the explorer. Promtail supports custom labels in addition to predefined ones like namespace, container, and stderr, simplifying log filtering. All logs are timestamped, allowing queries for specific time periods.
 
@@ -994,7 +994,7 @@ To resolve this issue, the ACME server and certificate duration are configured u
 
 The bootstrap script also generates SSH templates for mapping roles to principals. This is done by referencing the template in the OIDC provisioner configuration and using \texttt{cat} to create the file. While this approach may not be the most elegant, it is simpler than performing a volume mount. The template itself was created following Smallstep's guidelines in the Configuring step-ca Templates guide \parencite{smallstep_step_ca_templates}.
 
-In addition to configuring the OIDC provisioner, the Values file must also enable SSH and define settings for the JSON Web Token (JWK) provisioner, ingress, and DNS name.
+In addition to configuring the OIDC provisioner, the Values file must also enable SSH and define settings for the JSON Web Token (JWK) provisioner, ingress, and DNS name. Smallstep highlights several production considerations related to internet exposure, namely the use of a reverse proxy to restrict access to certain paths. For instance, \texttt{/ssh/hosts} reveals all SSH hosts, and the ACME provisioner is unauthenticated, allowing anyone to enroll in the PKI \parencite{SmallstepCA}. While these considerations have not yet been implemented, they are documented to ensure awareness.
 
 \subsection{Step Issuer}
 The Step Issuer is a deployment that issues certificates using either the \texttt{StepIssuer} or \texttt{StepClusterIssuer} CRD. The key difference is that \texttt{StepIssuer} operates within a single namespace, while \texttt{StepClusterIssuer} is cluster-wide. Both CRDs require the Step Issuer to be deployed, and cert-manager depends on these CRDs to issue certificates. The Step Issuer is configured to use the CA as the certificate authority.  
@@ -1038,15 +1038,52 @@ Autocert is installed automatically as part of the Autocert Helm chart, which al
 
 Step Autocert's primary function is to inject certificates directly into running containers. These certificates are stored in the container's filesystem under \texttt{/var/run/autocert.step.sm/}. This process operates by annotating a Kubernetes pod with \texttt{autocert.step.sm/name} and \texttt{autocert.step.sm/sans}. The first annotation specifies the Common Name (CN), while the second defines the Subject Alternative Names (SANs). Autocert then automatically adds a sidecar container to the pod, creates a shared volume mounted at the designated path, and places the certificates there. The sidecar container is also responsible for certificate renewal.
 
-\section{TLS configuration}
+\section{TLS Configuration} 
+Since TLS certificate requests are managed by cert-manager, the TLS configuration primarily involves specifying the correct annotations or certificate path for the server to retrieve the certificate. In addition to the straightforward setup steps, this section outlines key considerations regarding the platform.
 
-\subsection{Ingress TLS}
+\subsection{Ingress TLS} 
+The ingress controller is configured as part of the infrastructure stack. Regardless of the environment, it is set to use a designated Kubernetes secret as its TLS certificate. This secret, created by cert-manager, contains the TLS certificate for the ingress controller. The certificate resource is defined as illustrated in Figure \ref{fig:certificate_resource}.
+
+One important aspect to note is that the PKI is not deployed when the ingress controller is initially set up, meaning the referenced secret does not yet exist. The ingress controller handles this situation gracefully by defaulting to self-signed certificates. This functionality is advantageous, as it allows the ingress controller to be deployed before the certificate stack. Once the certificate stack is deployed and the certificate is issued, the ingress controller is restarted to apply the newly obtained certificate.
+
+Configuring the ingress controller to use a specific certificate is not strictly necessary, as individual ingress resources can define their own certificates. However, adopting a centralized approach simplifies the configuration and ensures that all ingress resources utilize the same default certificate. Both methods have been implemented in this project, as challenges require unique certificates. Nevertheless, the default certificate is valid for the set of known domains.
+
+\subsection{Let's Encrypt}\label{sec:letsencrypt} 
+In production mode, SSLH serves as the entry point, directing SSH traffic to the bastion and HTTP(S) traffic to an NGINX container running Certbot, as illustrated in Figure \ref{fig:architecture}. Certbot's role is to parse the server names specified in the NGINX configuration and request certificates from Let's Encrypt. Once obtained, Certbot updates the configuration to include the certificate and enforce HTTPS redirection for the specified domains.
+
+This setup is nearly ideal, but it presents a key challenge: enabling TLS passthrough for the CA and challenge domains. Instead of forwarding HTTPS traffic directly to port 443 on the proxy, we redirect it to an arbitrary port, namely port 3080. This port utilizes Server Name Indication (SNI) to determine the target domain, as extracting this information from headers is impossible without terminating TLS. Domains requiring certificates are streamed to port 443 on the proxy, while others are streamed directly to the ingress controller.
+
+Let's Encrypt offers two environments for certificate issuance, namely staging and production. The staging environment does not provide trusted certificates but allows testing of the issuance process with more forgiving rate limits. Conversely, the production environment imposes strict rate limits, which complicate testing. As described in Section \ref{sec:acme_challenges}, wildcard certificates cannot be requested, and Let's Encrypt enforces a limit of 50 certificates per registered domain per week \parencite{LetsEncryptRateLimits}. This restriction means that even if we attempt to obtain a trusted certificate for each challenge, we will quickly reach the limit. Moreover, only five certificates can be issued for an identical set of hostnames within a seven-day period \parencite{LetsEncryptRateLimits}. These constraints necessitate using PKI-issued certificates for the challenges. Fortunately, the PKI's root certificate can be easily trusted either via the step-CLI or by manually downloading the root certificate.
+
+In a development environment, Let's Encrypt cannot be utilized because the domains are not publicly accessible, preventing domain validation. This is not an issue, as the PKI can issue certificates for the required domains. The PKI is configured to use the ACME server, which is part of the Smallstep CA. The only distinction between running the proxy in development versus production is the specified ACME directory.
 
 \subsection{Services}
+Significant time has been dedicated to configuring TLS across services. While the process itself is straightforward, it is tedious and does not necessarily provide a learning experience. All services have TLS enabled except for the Deployer backend and Loki Results-Cache and Chunks-Cache, at least to the extent of the author's knowledge. However, metric exporters for these caches have been configured to use TLS. The advantage of omitting TLS for caches is improved performance, as TCP transmits raw data more efficiently without cryptographic overhead.
 
-\subsection{Let's Encrypt}\label{sec:letsencrypt}
+Attempts have been made to implement mTLS, but only a lax version using \texttt{VerifyClientCertIfGiven} has been successfully applied to Loki and Prometheus. However, since the certificate is not \textit{required}, this approach can be considered a partial failure. Various errors have been encountered when configuring mTLS on PostgreSQL database servers, such as "could not accept SSL connection: EOF detected" and "Could not read SSL key file." Even the Java database driver produced errors, later traced to incorrect certificate formats. For JDBC, certificates must be in PKCS-12 or PKCS-8 DER format rather than PEM \parencite{PostgreSQLJDBC}. Fortunately, a root certificate can be trusted by specifying its bundle path in the connection string. Enabling HTTPS on a server is simple, but requiring servers to present certificates for mTLS is significantly more complex -- a challenge the author has yet to solve. mTLS can also be enabled on ingress resources by specifying annotations \parencite{KubernetesIngressNGINX}.
 
-\newpage
+When a server enforces HTTPS, the Service Monitor responsible for gathering metrics from its endpoint must also use the HTTPS scheme. Figure \ref{fig:service_monitor_tls} illustrates how to configure a Service Monitor to use TLS within a Helm chart, a setup commonly applied across all Helm charts.
+
+\begin{figure}[h]
+    \centering
+\begin{minted}{typescript}
+serviceMonitor: {
+    enabled: true,
+    labels: { release: kubePrometheusStackRelaseName },
+    metricRelabelings: [ addClusterLabel ],
+    scheme: "https",
+    tlsConfig: {
+        caFile: "/var/run/step/ca.crt",
+        serverName: `promtail-metrics.${NS}.svc.cluster.local`,
+        insecureSkipVerify: false
+    }
+}
+\end{minted}
+\caption{Example of Service Monitor TLS configuration in a Helm chart. This setup ensures secure metric collection from an HTTPS-enabled server.}
+    \label{fig:service_monitor_tls}
+\end{figure}
+
+Configuring TLS for additional services primarily involves reading documentation and occasionally reviewing source code. For example, while Prometheus mentions a \texttt{web} block in the Values file, it does not specify its contents. Consulting Prometheus documentation is insufficient, as the Helm Chart deploys Prometheus via the Prometheus Operator using Prometheus CRD. Examining the CRD reveals how to enable TLS on the Prometheus server.
 
 \section{Deployer Backend}
 
