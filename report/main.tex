@@ -85,7 +85,7 @@ This thesis will not go into detail regarding the CTF challenges themselves, but
 \section{Motivation}
 The motivation behind this thesis is to develop a CTF platform tailored for educational purposes, particularly for Computer Science bachelor's students at the University of Southern Denmark.
 
-Haaukins, a state-of-the-art platform used to host De Danske Cybermesterskaber (DDC), has several limitations. As highlighted in Henrik Rossen Jakobsen's thesis, Haaukins is complex to deploy due to numerous manual steps and limited documentation. Additionally, validating challenges requires setting up a CTFd event, making iterative testing cumbersome.
+Haaukins, a state-of-the-art platform used to host De Danske Cybermesterskaber (DDC), has several limitations. As highlighted in Henrik Rossen Jakobsen's thesis, Haaukins is complex to deploy due to numerous manual steps and limited documentation. Additionally, validating challenges requires setting up a CTFd event, making iterative testing cumbersome. The thesis is summarized in Section \ref{sec:henrik_thesis}.
 
 To address these challenges, this project builds upon Henrik's work with the CTFd plugin and Deployer Backend. The goal is to enhance its functionality by integrating solutions for challenge validation and introducing container support where VM isolation is unnecessary. However, this is just one component of a larger platform. To ensure full usability, additional infrastructure must be developed, including persistent storage, authentication mechanisms, an introductory GUI for user interaction, and a bastion host for secure SSH access. The platform must also support straightforward deployment and reliable operation on UCloud.
 
@@ -502,6 +502,9 @@ Linting is a static code analysis technique used to detect errors, enforce codin
 
 SonarQube for IDE integrates automated code review into your development environment \Parencite{SonarQubeConnectedMode2025}. Connected mode links projects to SonarQube Cloud or Server, ensuring consistent best practices, preventing security vulnerabilities, and reducing technical debt before code is committed.
 
+\section{Henrik Thesis}\label{sec:henrik_thesis}
+
+
 \chapter{Implementation}\label{chap:implementation}
 This chapter outlines the implementation of a scalable, secure, and fault-tolerant CTF platform, building on prior concepts and technologies. The MVP is considered complete when the platform supports multiple users who can create, manage, and participate in challenges. Additionally, it must provide documentation for users, administrative monitoring, and robust security measures, including encrypted access and fault tolerance.
 
@@ -758,7 +761,7 @@ The challenge plugin requires a valid access token, issued by Keycloak, which re
 
 The token is securely stored in a cookie, as CTFd enforces \texttt{SESSION\_COOKIE\_\allowbreak HTTPONLY} and \texttt{SESSION\_COOKIE\_SAMESITE=Lax} \Parencite{CTFdConfig}. The HTTP-only setting ensures the cookie remains inaccessible to JavaScript, mitigating cross-site scripting (XSS) risks. The \texttt{SameSite=Lax} policy prevents unauthorized cross-site access while allowing cookies to be sent in top-level navigations, reducing the risk of cross-site request forgery (CSRF) attacks.
 
-\subsection{Challenges}
+\subsection{Challenges Frontend}
 The Challenge Plugin allows users to start and stop challenges, working alongside the Deployer Backend, which manages the challenge lifecycle. When a user initiates a challenge, the plugin triggers the backend to create and maintain a new instance. CTFd provides documentation for Challenge Type Plugins, along with associated templates on GitHub \parencite{CTFdChallengeTypes}. The frontend is built using JavaScript, while the backend is developed in Python with Flask.
 
 In addition to adhering to Flask's backend guidelines, the plugin implements a custom decay function and provides API endpoints for frontend interaction. API calls are made directly to the Flask backend running on the same domain, which then communicates with the Deployer Backend. This ensures server-to-server communication and avoids Cross-Origin Resource Sharing (CORS) issues.
@@ -960,12 +963,80 @@ While \texttt{ServiceMonitor} is used for monitoring services, \texttt{PodMonito
 Some dashboards require a \texttt{cluster} label to be configured. The only apparent way to achieve this is by adding \texttt{metricRelabelings} or \texttt{relabelings} to 14 scrape targets. The key difference between these configurations is that metric relabeling applies to samples after scraping but before ingestion, whereas relabeling applies before scraping. Why the implementation cannot rely solely on metric relabelings remains unclear. The added cluster label is named ``SDU-CTF''. However, some dashboards still experience issues, as they require the metrics to include a label called \texttt{image}, which is missing.
 
 \subsection{Non-Intrusive Logging}
+Promtail, deployed as a DaemonSet, collects container logs from each node and forwards them to Loki for storage and analysis. Logs can be gathered by mounting \texttt{/var/lib/docker/containers} or listening to the Docker socket. The preferred method is mounting the container folder, as exposing the Docker socket is considered a security risk.
+
+Promtail captures build logs and all container output sent to stdout and stderr. However, when using Docker-in-Docker (DinD), logs are encapsulated and not written to the containers directory despite being printed to stdout -- an observation based on experience.
+
+Installation is handled via the Promtail Helm chart \parencite{grafana_promtail_helm}, with Loki client configuration in the Values file. The most challenging aspect was setting up mTLS for secure authentication with Loki.
+
+Grafana integrates Loki as a data source, enabling log querying and visualization through dashboards or the explorer. Promtail supports custom labels in addition to predefined ones like namespace, container, and stderr, simplifying log filtering. All logs are timestamped, allowing queries for specific time periods.
 
 \section{Smallstep}\label{sec:smallstep}
+Smallstep was chosen for its OAuth2 OIDC capabilities to issue personal SSH certificates. Its zero-trust model strictly enforces communication only with certificates issued by itself, preventing interactions with unknown certificates.
+
+\begin{displayquote}
+    \textit{``\texttt{step} will expect to be able to perform a TLS handshake with the proxy, and use the CA's root certificate to complete the trust chain. So, for inbound TLS connections, the proxy should use a server certificate issued by \texttt{step-ca}\ldots By design, step-ca does not have an option to run in HTTP only. Philosophically, we value perimeterless security and we believe people should use encryption everywhere. Your proxy server should be configured to trust the step-ca root, to establish a verified TLS connection with your CA."\parencite{smallstep_step_ca}}
+\end{displayquote}
+    \hspace*\fill{\small--- Smallstep, Proxying step-ca traffic}
+
+As highlighted in the quote above, this strict requirement necessitated implementing TLS for all services communicating with Smallstep. During the process, it was logical to extend TLS across the entire cluster. While the zero-trust model can be inconvenient, enforcing security as a requirement rather than an option is an effective approach to ensuring system integrity. We also enabled TLS passthrough on the proxy for the CA domain, allowing the CA to manage TLS connections directly.
+
+The Smallstep ecosystem consists of three services: Step Certificates, Step Issuer, and Step Autocert. Each service has a distinct purpose and configuration, which will be detailed in the following sections. A common aspect of all services is that they have been installed using Helm charts from Smallstep's \texttt{helm-charts} repository \parencite{smallstep_helm_charts}.
 
 \subsection{Step Certificates}
+Step Certificates serves as the CA responsible for issuing certificates for the platform. Several considerations must be taken into account during its implementation. Smallstep provides an init script to generate the Helm Values file, offering a useful starting point. However, the generated file is incomplete, and it does not appear possible to specify all necessary settings at generation, at least according to the author's understanding.
+
+If manual configuration is required, one approach is to thoroughly review the documentation and create the configuration file from scratch. This method, however, is tedious and prone to missing critical settings. Alternatively, the \texttt{bootstrap} capability can generate the initial configuration as part of the Helm deployment. This process runs an init container that creates and emits ConfigMaps, which are then loaded by the primary container. The bootstrap script executes a user-defined set of \texttt{step} or Linux commands to generate the configuration. Notably, bootstrap does not allow manual configuration -- one must either specify everything manually or rely entirely on the bootstrap script.
+
+This constraint presents a challenge due to the circular dependency illustrated in Figure~\ref{fig:pulumi_stacks}. Adding an OIDC provisioner to Step CA via commands alone is not possible, as the provisioner must return public certificates. However, Keycloak requires Step CA to issue a TLS certificate for its server to function, creating a deadlock. In this situation, Step CA fails to initialize the provisioner. Since the filesystem is set to read-only for security reasons, all configuration must be completed during bootstrap initialization, as modifications afterward are not possible. Consequently, the configuration remains static once generated.
+
+To resolve this issue, the ACME server and certificate duration are configured using \texttt{step} commands, while the OIDC provisioner is manually added. This is achieved by modifying the initialized configuration file with \texttt{jq} during the bootstrap process, appending the provisioner to the JSON configuration. The setup was based on an OIDC example for Google provided by Smallstep's documentation \parencite{smallstep_google_identity}. If Keycloak does not respond, Step CA will throw an error, but it does not crash the server, only the provisioner initialization fails. This initialization is only attempted once, meaning the Step CA server must be restarted to reinitialize the provisioner. The restart can be triggered once Keycloak is running and ready.
+
+The bootstrap script also generates SSH templates for mapping roles to principals. This is done by referencing the template in the OIDC provisioner configuration and using \texttt{cat} to create the file. While this approach may not be the most elegant, it is simpler than performing a volume mount. The template itself was created following Smallstep's guidelines in the Configuring step-ca Templates guide \parencite{smallstep_step_ca_templates}.
+
+In addition to configuring the OIDC provisioner, the Values file must also enable SSH and define settings for the JSON Web Token (JWK) provisioner, ingress, and DNS name.
+
+\subsection{Step Issuer}
+The Step Issuer is a deployment that issues certificates using either the \texttt{StepIssuer} or \texttt{StepClusterIssuer} CRD. The key difference is that \texttt{StepIssuer} operates within a single namespace, while \texttt{StepClusterIssuer} is cluster-wide. Both CRDs require the Step Issuer to be deployed, and cert-manager depends on these CRDs to issue certificates. The Step Issuer is configured to use the CA as the certificate authority.  
+
+This project implements \texttt{StepClusterIssuer} since each challenge runs in its own namespace alongside its ingress. The deployment benefits from Pulumi's capability to create and query Kubernetes resources during provisioning, as the Step Issuer requires a CA bundle and KID -- values that remain unknown until Step CA is successfully deployed. Apart from this dependency, configuring the Step Issuer is straightforward and involves specifying parameters in the Values file.  
+
+During implementation, permission issues arose, but these were resolved by explicitly specifying the namespace for cert-manager, as its cluster role binding required it. The Step Issuer relies on the JWK provisioner to issue certificates, necessitating a password reference for a Kubernetes secret generated by Step CA in the Values file as well.
+
+The integration between Step CA, Step Issuer, \texttt{StepClusterIssuer}, and cert-manager enables the specification of certificate resources, as demonstrated in Figure~\ref{fig:certificate_resource}.
+
+\begin{figure}[h]
+    \centering
+\begin{minted}{typescript}
+new k8s.apiextensions.CustomResource("keycloak-inbound-tls", {
+    apiVersion: "cert-manager.io/v1",
+    kind: "Certificate",
+    metadata: {
+        name: "keycloak-inbound-tls",
+        namespace: NS,
+    },
+    spec: {
+        secretName: "keycloak-inbound-tls",
+        commonName: `keycloak.${NS}.svc.cluster.local`,
+        dnsNames: [KEYCLOAK_HOST, `keycloak.${NS}.svc.cluster.local`],
+        issuerRef: {
+            group: "certmanager.step.sm",
+            kind: "StepClusterIssuer",
+            name: "step-issuer",
+        },
+    },
+});  
+\end{minted}
+    \caption{Example of a certificate resource definition using \texttt{StepClusterIssuer} for Keycloak TLS.}
+    \label{fig:certificate_resource}
+\end{figure}
+
+During the certificate signing request (CSR), a temporary Kubernetes secret is generated. Once the certificate is successfully issued, this temporary secret is replaced by a persistent secret matching the \texttt{secretName} specified in the resource definition.
 
 \subsection{Step Autocert}
+Autocert is installed automatically as part of the Autocert Helm chart, which also deploys Step Certificates. Step Certificates is simply defined as a dependency within the chart. In its Values file, Step Certificates includes the option \texttt{autocert.enabled}, which patches the webhook to integrate with Step Certificates and grants Autocert the necessary permissions in its \texttt{ClusterRole}.
+
+Step Autocert's primary function is to inject certificates directly into running containers. These certificates are stored in the container's filesystem under \texttt{/var/run/autocert.step.sm/}. This process operates by annotating a Kubernetes pod with \texttt{autocert.step.sm/name} and \texttt{autocert.step.sm/sans}. The first annotation specifies the Common Name (CN), while the second defines the Subject Alternative Names (SANs). Autocert then automatically adds a sidecar container to the pod, creates a shared volume mounted at the designated path, and places the certificates there. The sidecar container is also responsible for certificate renewal.
 
 \section{TLS configuration}
 
@@ -973,7 +1044,9 @@ Some dashboards require a \texttt{cluster} label to be configured. The only appa
 
 \subsection{Services}
 
-\subsection{Let's Encrypt}
+\subsection{Let's Encrypt}\label{sec:letsencrypt}
+
+\newpage
 
 \section{Deployer Backend}
 
@@ -1021,6 +1094,8 @@ The current setup only requires adding hostnames to the hosts file. Minikube's I
 
 The Docker image registry is not strictly tied to local development in Minikube, but certain considerations should be kept in mind. When running Minikube on Windows, an alternative domain or tag must be used instead of localhost when pushing images; otherwise, an error occurs. While localhost works with standard Docker, the exact cause of this discrepancy remains unclear, though the workaround effectively resolves it. The registry itself may or may not be configured with a certificate, but this poses no issue, as Docker supports \textit{insecure} registries. By default, Docker permits insecure registries on the subnet \texttt{127.0.0.0/8} and \texttt{hubproxy.docker.internal:5555}, with these settings retrievable via the \texttt{docker info} command. Minikube operates within its own context, and switching to it can be accomplished using \texttt{eval \$(minikube docker-env)}. Within this context, Minikube allows insecure registries within the ranges \texttt{10.96.0.0/12} and \texttt{127.0.0.0/8}. The use of a domain is inconsequential as long as the registry's IP falls within these designated subnets \Parencite{dockerInsecureRegistries}. Locally built images reside within the host's Docker context rather than Minikube's. To enable Minikube to access these images, developers must either switch to the Minikube context or push the images to a registry accessible by the Kubelet. Since Pulumi can build and push images as part of the deployment process, an efficient workflow is to provision the registry, build and push images to it, and subsequently deploy applications using those images. Automating this process simplifies operations compared to manually switching contexts. However, in a full Kubernetes cluster, the registry may not be necessary, as images can be directly accessed from the host's Docker environment.
 
+The entry point differs when using Minikube. Figure~\ref{fig:architecture} shows SSLH as the entry point, but in Minikube, the ingress controller is used instead. Node Ports are not directly exposed in Minikube, requiring \texttt{minikube service <service-name> --url}, which assigns a different port than specified in the Kubernetes resource. This makes the entry point unreliable, necessitating the use of the ingress controller. However, in the production environment, the ingress controller is not exposed externally.
+
 \subsection{Pipeline}
 What is a pipeline if not just a series of commands being run? A pipeline is convenient because triggers can be defined to run the pipeline automatically on, e.g., merges to some branch. In the spirit of CI/CD, a pipeline has also been implemented in this project -- though outdated -- such that the project could be deployed from a phone or automatically on trigger if desired.
 
@@ -1030,14 +1105,12 @@ A significant portion of the work has already been implemented as part of the Ia
 \begin{minted}{json}
 {
     "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "Deploy infrastructure",
-            "group": "build",
-            "type": "shell",
-            "command": "pulumi up --stack dev -y --cwd src/infrastructure"
-        }
-    ]
+    "tasks": [{
+        "label": "Deploy infrastructure",
+        "group": "build",
+        "type": "shell",
+        "command": "pulumi up --stack dev -y --cwd src/infrastructure"
+    }]
 }
 \end{minted}
     \caption{VS Code task for deploying the platform.}
@@ -1170,6 +1243,8 @@ While the PKI effectively facilitates automatic certificate issuance, chaos test
 
 This issue has not been observed when using certificate resources in Kubernetes, where cert-manager creates Kubernetes secrets containing TLS certificates. Even if cert-manager fails, the certificate remains accessible via the previously generated secret, ensuring continued operation. Cert-manager only needs to renew certificates before expiration, making it potentially more reliable than Autocert out of the box. Further testing is necessary to reach a definitive conclusion.
 
+Certbot modifies the NGINX configuration while requesting a certificate, specifying the request path, but each time the proxy is reinstalled or scaled, a new certificate is issued instead of reusing the existing one. While requesting new certificates is not inherently problematic, Let's Encrypt enforces strict rate limits, allowing only five requests per exact hostname set every seven days, as outlined in Section~\ref{sec:letsencrypt}, necessitating persistent certificate storage, which is currently missing. A better approach is configuring an Issuer resource in Kubernetes and managing certificates through cert-manager, which stores them in Kubernetes secrets. Certificates would be requested as defined resources, with cert-manager automatically renewing them before expiration. This method decouples the proxy from certificate requests, preventing reinstallation or scaling from interfering with certificate management.
+
 \section{Stack Update}
 Most development occurs within the application stack, and deploying recent changes to production requires the use of the \texttt{pulumi up} command. This command generates a preview of the changes, allowing them to be reviewed and accepted. Once applied, the changes should take effect immediately in the production environment. While this is typically the case, there are instances where downstream pods are not restarted, preventing changes from being \textit{directly} applied. The issue arises because images are correctly built and pushed to the registry, but Pulumi does not recognize these changes for dependent deployments, resulting in a lack of automatic restarts. As a result, the updates are made but remain ineffective. This problem has previously been encountered when using plain Helm. Investigating how Pulumi integrates with Kubernetes and Helm is necessary to eliminate the need for manual intervention. Notably, the image is referenced using its digest, ensuring specificity, yet the issue persists. Manually forcing a pod restart resolves the problem, either by deleting the affected pod or performing a rollout restart on the corresponding deployment. Anything that triggers a new image pull should suffice. So far, this issue has only been observed in the Deployer Helm chart.
 
@@ -1187,13 +1262,13 @@ The MVP can be considered successful, but further development remains. Additiona
 \subsection{Comparison -- is it worth?}
 
 \chapter{Conclusion}
-A review of state-of-the-art technologies provided valuable insights into popular solutions suitable for building a CTF platform. The development process followed an extreme programming approach, adapting to emerging needs as the project evolved. The platform's infrastructure is based on OSS, with the only custom-developed component being the Deployer Backend. While integrating OSS is not always easier than developing software from scratch, it significantly reduces time and effort and offers the advantage of community-driven maintenance.
+A review of state-of-the-art technologies provided valuable insights into popular solutions suitable for building a CTF platform. The development process followed an extreme programming approach, adapting to emerging needs as the project evolved. The platform's infrastructure is based on OSS, with the only custom-developed component being the Deployer Backend. While integrating OSS is not always easier than developing software from scratch, it significantly reduces time and effort and offers the advantage of community-driven maintenance.\todo{Too tough beginning}\todo{State achievements directly}
 
 The CTF platform was deployed on UCloud, demonstrating the feasibility of mitigating its constrained network environment using Headscale and Tailscale. By running the platform on a VPN network under our administration, we maintained control over network security. However, UCloud's stability issues and lack of hardware virtualization significantly impacted performance, leading to the decision to migrate the platform to GCP. Unlike UCloud, GCP provides a more reliable environment with hardware virtualization, which offers improved efficiency and faster execution. This transition comes with additional costs, as GCP is significantly more expensive than UCloud.
 
 The platform provides users with essential knowledge on its usage through a Jekyll-powered homepage. This homepage includes detailed sections covering an introduction to the platform, API usage, challenge development, SSH-based connections to challenges, and guidance on trusting the root certificate.
 
-Chaos testing conducted by Matteo Trentin confirmed the platform's fault tolerance. Storage is persisted across deployments using NFS dynamic storage provisioning combined with either MinIO or a persistent disk in GCP. The platform supports any block storage, requiring only proper provisioner configuration. In the event of server node restarts or shutdowns, the system remains recoverable, though PKI-related challenges may sometimes require minor manual intervention.
+Chaos testing conducted by Matteo Trentin\todo{Make sure to claim credit} confirmed the platform's fault tolerance. Storage is persisted across deployments using NFS dynamic storage provisioning combined with either MinIO or a persistent disk in GCP. The platform supports any block storage, requiring only proper provisioner configuration. In the event of server node restarts or shutdowns, the system remains recoverable, though PKI-related challenges may sometimes require minor manual intervention.
 
 The platform implements IAM via Keycloak, with many services configured for authentication and authorization. Grafana natively supports OIDC, while a custom authentication plugin was developed for CTFd to enable OIDC compatibility. The PKI is also integrated with Keycloak, securing infrastructure through a bastion host that restricts access to users possessing an SSH certificate issued by the PKI with a bastion principal. The Deployer Backend does not directly authenticate users via Keycloak but relies on access tokens signed by Keycloak for authorization, verifying each token's integrity and validity -- users must obtain these tokens themselves. A more user-friendly approach would have been to support basic authentication with a username and password, allowing the API to request a token from Keycloak using the Resource Owner Password Credentials grant.
 
