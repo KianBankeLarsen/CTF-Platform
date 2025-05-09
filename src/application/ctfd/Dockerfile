@@ -1,4 +1,4 @@
-FROM ctfd/ctfd:3.7.5
+FROM ctfd/ctfd:3.7.7
 
 COPY ctfd/requirements.txt .
 RUN pip install -r requirements.txt
