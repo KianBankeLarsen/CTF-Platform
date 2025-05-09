@@ -1085,6 +1085,82 @@ serviceMonitor: {
 
 Configuring TLS for additional services primarily involves reading documentation and occasionally reviewing source code. For example, while Prometheus mentions a \texttt{web} block in the Values file, it does not specify its contents. Consulting Prometheus documentation is insufficient, as the Helm Chart deploys Prometheus via the Prometheus Operator using Prometheus CRD. Examining the CRD reveals how to enable TLS on the Prometheus server.
 
+\section{Jekyll}
+This section explores how Jekyll has been used to create the homepage and README, along with the information they provide to our users and those with technical interests. Building a Jekyll website requires a substantial set of tools; however, this section will demonstrate how multistage builds can be leveraged to produce a minimal Docker image nonetheless.
+
+\subsection{Homepage}
+The goal has never been to create a visually stunning homepage but rather to provide a simple and effective way to communicate the platform's purpose and functionality. As the landing page, it offers an overview of the platform's features, including the following sections: Introduction, Building Challenges, Using the API, Connecting to Challenges via SSH, and Trusted Connection.
+
+A Jekyll template was chosen for its simplicity, favoring a hacker-themed design. The forked template, named Neumorphism, was created by longpdo and is licensed under the MIT License \parencite{neumorphism}. The original template is hosted on GitHub: \url{https://longpdo.github.io/neumorphism/}.
+
+Originally designed as a CV template, Neumorphism required adaptation, though most of its styling remains unchanged. It allows direct personalization via the \texttt{\_config.yml} file. Rather than a dynamic implementation, the homepage's HTML has been hardcoded into the \texttt{\_includes} and \texttt{\_layouts} directories.
+
+The template has not been updated in three years, with some files remaining unchanged for five. Many dependencies had become deprecated and required updates, particularly the \texttt{gulpfile.js}, which needed significant modifications. Libraries in \texttt{package.json} were upgraded to their latest versions, causing some breaking changes that were subsequently fixed. Gulp, used for automating workflows, compiles the website into static HTML and JavaScript files and includes targets for file watching and local serving.
+
+To support syntax-highlighted code blocks, Prism has been added as a JavaScript vendor \parencite{prismjs}. It consists of two static files: JavaScript and CSS. Only the required languages and plugins, such as Line Number and Show Language, have been included, ensuring a minimal image size.
+
+\subsection{Multistage Build}
+Multistage builds utilize multiple \texttt{FROM} statements, each initiating a new stage with a different base image. A key advantage of this approach is the ability to selectively copy artifacts from one stage to another, leaving behind everything else. An example of such a Dockerfile is shown in Figure \ref{fig:multistage_build}.
+
+\begin{figure}[h]
+    \centering
+\begin{minted}{Dockerfile}
+FROM node:23.5.0 AS base
+WORKDIR /app
+# Add and install dependencies
+RUN gulp compile
+
+FROM nginx:1.28.0-alpine3.21
+WORKDIR /app
+COPY --from=base /app/_site .
+# Run entrypoint.sh script
+\end{minted}
+    \caption{Multistage build for the Jekyll homepage, utilizing Node.js and Nginx. Some code has been omitted for brevity and replaced with comments.}
+    \label{fig:multistage_build}
+\end{figure}
+
+To compare image sizes, the \texttt{node:23.5.0} image is \SI{1.61}{\giga\byte}, while \texttt{nginx:1.28.0\allowbreak-alpine3.21} is only \SI{73.6}{\mega\byte}. The final Jekyll homepage image is \SI{75.8}{\mega\byte}, representing a substantial reduction from the original \SI{1.61}{\gibi\byte}. Based on this data, we can deduce that the Jekyll homepage files occupy only $\SI{75.8}{\mega\byte} - \SI{73.6}{\mega\byte} = \SI{2.2}{\mega\byte}$. 
+
+This optimization would not have been possible without multistage builds, as Node.js and Ruby dependencies would otherwise consume significant disk space. Smaller images enhance scalability.
+
+\subsection{README}
+The README is deployed as a Jekyll website using the \texttt{jekyll-theme-slate} theme \parencite{slate_theme}, available as a Ruby gem on GitHub. GitHub simplifies deployment. Enabling GitHub Pages on the repository in \texttt{Settings > Pages > Build and deployment} is the only required step.
+
+The template has been modified to include music from freemusicarchive.org. It previously featured a Vanta canvas for an animated background, but due to its excessive size and performance impact, it was removed. The README is hosted on GitHub Pages at \url{https://kianbankelarsen.github.io/CTF-Platform/}. The main page links to other Markdown files, which are compiled as subpages. Additionally, the README includes shields from \url{https://shields.io/}, providing badges that display metrics such as SonarCloud Tech Debt and licensing information.
+
+Although GitHub natively supports Mermaid diagrams, manual integration was required for the Jekyll homepage. This was achieved using \url{https://unpkg.com/mermaid@11.4.1/dist/mermaid.min.js}. The layout initializes Mermaid and configures it to use the neutral theme.
+
+\section{Docker Registry}
+The Registry is configured to use \texttt{htpasswd} for authentication, persistent storage for images, and a TLS certificate from the PKI.
+
+\subsection{Authentication}
+The Registry has been configured to use basic authentication via an Apache \texttt{htpasswd} file. The only supported password format is \texttt{bcrypt} \parencite{docker_distribution_config}. The username and password are generated as part of the infrastructure stack, then loaded into the application stack and provided to an init container in the Registry pod, which uses them to create the \texttt{htpasswd} file. This file is stored in an \texttt{emptyDir} volume, which is subsequently mounted by the Registry, as illustrated in Figure \ref{fig:registry_auth}.
+
+\begin{figure}[h]
+    \centering
+\begin{minted}{typescript}
+initContainers: [{
+    name: "init-htpasswd",
+    image: `httpd:${HTTPD_TAG}`,
+    command: ["sh", "-c"],
+    args: [`htpasswd -Bbn ${dockerUsername} ${dockerPassword} > /auth/htpasswd`],
+    volumeMounts: [ { name: "auth-volume", mountPath: "/auth" }],
+}]
+\end{minted}
+    \caption{Registry authentication using htpasswd.}
+    \label{fig:registry_auth}
+\end{figure}
+
+To allow pods to pull from this private registry, a Kubernetes secret has been created following the guidelines provided by Kubernetes \parencite{kubernetes_private_registry}. This secret is referenced in the \texttt{imagePullSecrets} field of the pod specification, enabling pods to authenticate with the registry and pull images. The secret must reside in the same namespace as the pod that requires the image, as secrets cannot be shared across namespaces \parencite{kubernetes_imagepullsecrets}.
+
+\subsection{Exposure}
+In the development environment, the Registry is exposed via an ingress on port 443, as this is the only reliable method for exposing it in Minikube.
+
+In the production environment, the ingress resource is never created, and the Registry is instead exposed via a \texttt{NodePort} on port 30444. Since this port is not externally accessible, only local builds, either on the host or within the cluster, can be pushed to the Registry. This approach prevents unnecessary exposure to the internet because users are not intended to interact with the Registry directly.
+
+\section{Bastion}
+\subsection{OS Hardening}
+
 \section{Deployer Backend}
 
 \subsection{Endpoints}
@@ -1095,20 +1171,11 @@ Configuring TLS for additional services primarily involves reading documentation
 
 \subsection{Building VM Disk Image}
 
-\section{Docker Registry}
-
-\subsection{Authentication}
-\subsection{Exposure}
-
-\section{Bastion}
-\subsection{OS Hardening}
-
 \section{Health Probes}
 
-\section{Jekyll}
-\subsection{Hompepage}
-\subsection{README}
-\subsection{Multistage Build}
+\section{Dependabot}
+
+\section{SonarCloud}
 
 \chapter{Discussion}
 In this chapter, we will examine the development process and the key decisions made throughout the project. With a critical yet objective approach, we will assess these choices, explore possible alternatives, and provide a comprehensive evaluation of the platform's overall performance.
