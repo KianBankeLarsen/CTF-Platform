@@ -1159,7 +1159,140 @@ In the development environment, the Registry is exposed via an ingress on port 4
 In the production environment, the ingress resource is never created, and the Registry is instead exposed via a \texttt{NodePort} on port 30444. Since this port is not externally accessible, only local builds, either on the host or within the cluster, can be pushed to the Registry. This approach prevents unnecessary exposure to the internet because users are not intended to interact with the Registry directly.
 
 \section{Bastion}
+This section outlines how authentication on the bastion is implemented, including SSH configuration and the personal certificate request process. The bastion is a critical component of the platform, serving as a secure entry point for users to access their challenges.
+
+\subsection{Authentication}
+The bastion is configured to use SSH certificates issued by Smallstep for authentication. Only public key authentication is allowed, and only keys signed by the specified CA key, listed in \texttt{TrustedUserCAKeys}, are permitted.
+
+\begin{multicols}{2} 
+    \begin{itemize}
+        \item \texttt{AuthenticationMethods publickey}
+        \item \texttt{PubkeyAuthentication yes}
+        \item \texttt{PasswordAuthentication no}
+        \item \texttt{PermitEmptyPasswords no}
+        \item \texttt{PermitRootLogin no}
+        \item \texttt{TrustedUserCAKeys /etc/ssh/\allowbreak ca\_user\_key.pub}
+        \item \texttt{HostKey /etc/ssh/ssh\_host\allowbreak\_ecdsa\_key}
+        \item \texttt{HostCertificate /etc/ssh/\allowbreak  ssh\_host\_ecdsa\_key-cert.pub}
+    \end{itemize}
+\end{multicols}
+
+Figure~\ref{fig:bastion_host_key} shows part of the bastion entry point script, demonstrating how a signed host key (certificate) is requested and presented to users upon login. First, the CA is bootstrapped to establish trust and perform basic configuration. Then, the SSH certificate is requested, generating both the public and private key along with the certificate.
+
+\begin{figure}[h]
+    \centering
+\begin{minted}{bash}
+step ca bootstrap \
+    --ca-url ${INTERNAL_STEP_URL} \
+    --fingerprint ${CA_FINGERPRINT}
+
+step ssh certificate ${KEY_ID} ssh_host_ecdsa_key \
+    --host  \
+    --issuer admin \
+    --provisioner-password-file provisioner_password \
+    --no-password --insecure
+\end{minted}
+    \caption{Requesting and generating the bastion host key.}
+    \label{fig:bastion_host_key}
+\end{figure}
+
+Users can choose to trust hosts signed by the CA by following a process similar to what is shown in Figure~\ref{fig:bastion_known_hosts}.
+
+\begin{figure}[h]
+    \centering
+\begin{minted}{bash}
+echo "@cert-authority * ecdsa-sha2-nistp256 <public-key>" >> ~/.ssh/known_hosts
+\end{minted}
+    \caption{Adding the bastion's CA-signed public key to known hosts.}
+    \label{fig:bastion_known_hosts}
+\end{figure}
+
+Since the host certificate is only valid for 30 days, a Cron script has been implemented to automatically renew it every week. The script utilizes \texttt{step ssh renew}, followed by a \texttt{kill -HUP} command to reload the SSH configuration and apply the new certificate.
+
+\subsection{Certificate Request}
+Users requesting a personal SSH certificate must follow the steps outlined in Figure~\ref{fig:bastion_certificate_request}. First, they bootstrap the CA, just as the bastion does. Refreshing the SSH agent is often necessary, which is done using the \texttt{eval} command to ensure it is running and that old certificates stored in memory are cleared. The personal certificate is issued via the Keycloak issuer, and upon executing \texttt{step ssh login}, users are prompted to authenticate using their SSO account. Once authentication is complete, the certificate can be verified by listing it in the terminal with \texttt{ssh-add -L}.
+
+\begin{figure}[h]
+    \centering
+\begin{minted}{bash}
+# Bootstrap only once
+step ca bootstrap \
+  --ca-url https://ca.ctf.jacopomauro.com \
+  --fingerprint <fingerprint> \
+  --install
+
+# Every time a certificate is required
+eval $(ssh-agent)
+step ssh login --issuer keycloak
+\end{minted}
+    \caption{Requesting a personal SSH certificate for bastion authentication.}
+    \label{fig:bastion_certificate_request}
+\end{figure}
+
+Once authenticated, users can leverage the bastion as a jump proxy to access their challenges. The command in Figure~\ref{fig:bastion_ssh_command} demonstrates this process. Because the connection is only streamed until reaching SSLH, no TLS tunneling is required, allowing users to utilize SSH as they normally would.
+
+\begin{figure}[h]
+    \centering
+\begin{minted}{bash}
+ssh -p 8022 <user>@ssh.challenge-<subdomain> -J bastion@ctf.jacopomauro.com:443 
+\end{minted}
+    \caption{Using the bastion as an SSH jump proxy to access challenges.}
+    \label{fig:bastion_ssh_command}
+\end{figure}
+
+For port-forwarding, users can append the \texttt{-L <local-port>:<service:port>} option. Additionally, \texttt{-N} prevents an interactive shell, while \texttt{-f} sends the SSH process to the background, allowing users to continue working while keeping the tunnel active. These options are useful for preparing challenge solution scripts.
+
 \subsection{OS Hardening}
+OS hardening involves implementing security measures and applying patches to strengthen the operating system against cyberattacks. While the actions taken on the bastion are not exhaustive, they provide a solid foundation for security. The bastion is built on the \texttt{alpine:3.21.0} image, a lightweight Linux distribution with minimal preinstalled tools. Fewer tools reduce the potential attack surface by limiting vulnerabilities. The only custom-installed packages are listed below:
+
+\begin{multicols}{2} 
+    \begin{itemize}
+        \item \texttt{dumb-init}
+        \item \texttt{openssh}
+        \item \texttt{shadow}
+        \item \texttt{step-cli}
+    \end{itemize}
+\end{multicols}
+
+The \texttt{dumb-init} package is a lightweight init system that properly forwards signals and reaps zombie processes. The \texttt{openssh} package provides the SSH server necessary for secure remote access to the bastion. The \texttt{shadow} package includes essential tools for managing user accounts and passwords, and it is specifically used to disable password authentication for the bastion user. The \texttt{step-cli} package is the command-line interface for Smallstep.
+
+To enhance SSH security, the following restrictions have been implemented:
+
+\begin{multicols}{2} 
+    \begin{itemize}
+        \item \texttt{PermitTTY no}
+        \item \texttt{X11Forwarding no}
+        \item \texttt{PermitTunnel no}
+        \item \texttt{GatewayPorts no}
+        \item \texttt{AllowTcpForwarding yes}
+        \item \texttt{ForceCommand /usr/sbin/\allowbreak nologin}
+    \end{itemize}
+\end{multicols}
+
+These settings restrict functionality so that only TCP forwarding is permitted, ensuring the bastion serves solely as a jump proxy without additional access capabilities.
+
+\section{Kubernetes Probes}
+Kubernetes supports three types of probes: \texttt{livenessProbe}, \texttt{readinessProbe}, and \texttt{startupProbe}. These probes monitor the health and readiness of containers running in a Kubernetes cluster. The \texttt{livenessProbe} determines whether a container is still running and should be restarted if it fails. The \texttt{readinessProbe} checks if a container is ready to receive traffic, while the \texttt{startupProbe} verifies that an application has started successfully. The \texttt{startupProbe} is particularly useful for applications with long startup times, as it prevents other probes from failing during initialization.
+
+Probes can be configured using different methods, such as HTTP GET requests, TCP socket checks, or command execution inside the container. Their configuration is defined in the Kubernetes deployment resource. These probes are essential for Kubernetes' self-healing capabilities, enabling the platform to automatically detect and recover from failures.
+
+This project utilizes all three probe types but only employs the HTTP GET and command execution methods. While most probes are straightforward, the probes installed on the Certbot/SSLH proxy pod are more complex and require closer examination.
+
+To verify that SSLH correctly routes traffic, an HTTP GET probe has been installed. It specifies the SSLH port, the HTTPS scheme, and the HTTP host header. The host header is necessary because the ingress controller require it to route traffic to the correct service. The HTTP GET request is always intercepted by the SSLH proxy and redirected to the ingress controller due to a lack of SNI support. The ingress then routes the traffic back to the SSLH proxy on port 443, which responds on its \texttt{/health} endpoint. The probe is configured to check the health status every 30 seconds.
+
+Certificate validity checks for the SSLH proxy have been implemented using the exec command. A Bash script verifies the expiration date of the certificate. If the certificate has expired, indicating that renewal failed, the container is restarted to trigger a new certificate request. Additionally, a curl command checks the health of the SSLH proxy. Curl is used in both cases because a failure in the SSLH probe might stem from an issue with the proxy, and vice versa. The curl command is currently implemented with the \texttt{-k} flag, but in production, it should be modified to verify the certificate's trustworthiness. Similar validation checks have been applied to the bastion to ensure the integrity of its host certificate.
+
+CTF challenges also incorporate probes. Since the VMs initially took a long time to start, the \texttt{startupProbe} was intended for implementation, but KubeVirt does not support it. As a result, the \texttt{startupProbe} has only been applied when using containers for deploying CTF challenges.
+
+\section{Dependabot}
+Dependabot has been implemented to automatically detect outdated dependencies in the project. Its configuration is defined in the \texttt{.github/dependabot.yml} file, specifying the package manager, directory, and update schedule. It is set to check for updates weekly and will create PRs for any outdated dependencies it identifies. The supervised package managers are \texttt{github-actions}, \texttt{pip}, \texttt{npm}, and \texttt{Docker}. In addition to pull requests, security updates are also sent via email.
+
+\section{SonarCloud}
+SonarCloud has been integrated into this project, and a workflow in GitHub Actions has been configured to run SonarCloud analysis on every push and pull request to the \texttt{main} and \texttt{develop} branches. The workflow is defined in \texttt{.github/workflows/sonarcloud.yml}. 
+
+The primary advantage of SonarCloud is its ability to provide a comprehensive overview of code quality, including code smells, bugs, and vulnerabilities. These metrics can be integrated with GitHub to enforce quality gates, ensuring that only code meeting the specified standards is merged into the \texttt{main} branch. However, this feature has not been implemented yet, as the project is still in its early stages with a single developer.
+
+The dashboard is available at \href{https://sonarcloud.io/project/overview?id=KianBankeLarsen_CTF-Platform}{\texttt{https://sonarcloud.io/project/overview?\allowbreak id=KianBankeLarsen\_CTF-Platform}}. Some folders are excluded from scanning, but approximately 8.500 lines of code are monitored by SonarCloud. Several security hotspots have been identified, and numerous issues require attention. An issue can be as simple as specifying a memory request for a container. SonarCloud also reports that 5.8\% of the code in the CTF-Challenges repository is duplicated, along with other metrics like maintainability highlighting technical debt.
 
 \section{Deployer Backend}
 
@@ -1170,12 +1303,6 @@ In the production environment, the ingress resource is never created, and the Re
 \subsection{Reflector}
 
 \subsection{Building VM Disk Image}
-
-\section{Health Probes}
-
-\section{Dependabot}
-
-\section{SonarCloud}
 
 \chapter{Discussion}
 In this chapter, we will examine the development process and the key decisions made throughout the project. With a critical yet objective approach, we will assess these choices, explore possible alternatives, and provide a comprehensive evaluation of the platform's overall performance.
