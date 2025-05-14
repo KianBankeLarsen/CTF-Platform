@@ -58,10 +58,6 @@
 \paragraph{Danish}
 \end{abstract}
 
-\chapter*{Acknowledgements}
-\thispagestyle{empty}
-\clearpage
-
 \pagenumbering{roman}
 
 { \hypersetup{hidelinks} \tableofcontents \addtocontents{toc}{\vskip-40pt}}
@@ -503,7 +499,23 @@ Linting is a static code analysis technique used to detect errors, enforce codin
 SonarQube for IDE integrates automated code review into your development environment \Parencite{SonarQubeConnectedMode2025}. Connected mode links projects to SonarQube Cloud or Server, ensuring consistent best practices, preventing security vulnerabilities, and reducing technical debt before code is committed.
 
 \section{Henrik Thesis}\label{sec:henrik_thesis}
+Since Henrik's thesis is not publicly accessible, we cannot reference it directly. Instead, we provide a summary of its key points.
 
+Henrik's thesis investigates the design and deployment of CTF challenges, with a focus on simplifying integration and improving the security and flexibility of hosting environments. The work begins with a comprehensive review of current open-source Jeopardy-style CTF platforms, including CTFd, Haaukins, rCTF, and kCTF, analyzing their strengths and limitations in areas such as challenge isolation, continuous integration and developer usability. 
+
+Common challenges include difficulty testing challenges outside the host environment and insufficient container isolation, which could allow attackers to compromise the underlying system.
+
+To address these issues, the thesis presents a proof-of-concept CTF platform that enables:
+
+\begin{itemize}
+    \item On-demand challenge deployment in isolated virtual machines (VMs), mitigating container escape risks.
+    \item Use of Docker Compose files for both local development and remote deployment, easing the development workflow.
+    \item Automated and manual testing of challenges via an API, without requiring administrative access.
+\end{itemize}
+
+The system integrates Kubernetes and KubeVirt for orchestrating VMs, and extends the popular CTFd frontend with support for managing dynamic, containerized challenges. Although VM-based deployment introduces startup latency and higher memory usage compared to container-only solutions, it significantly improves security through stronger isolation.
+
+In conclusion, the thesis contributes a deployable platform prototype, empirical performance evaluation, and architectural guidance for future CTF systems, particularly those emphasizing safe, developer-friendly challenge integration.
 
 \chapter{Implementation}\label{chap:implementation}
 This chapter outlines the implementation of a scalable, secure, and fault-tolerant CTF platform, building on prior concepts and technologies. The MVP is considered complete when the platform supports multiple users who can create, manage, and participate in challenges. Additionally, it must provide documentation for users, administrative monitoring, and robust security measures, including encrypted access and fault tolerance.
@@ -1489,8 +1501,36 @@ Platform demonstrations were conducted multiple times with distinct objectives. 
 The MVP can be considered successful, but further development remains. Additional administrative endpoints are necessary, while students already have access to the required functionality. Some code requires refactoring for maintainability, which aligns with an agile or iterative development model.
 
 \section{Performance of Hardware Virtualization}
+As outlined in an Oracle blog by Christian Horn, hardware virtualization is a powerful technology that can significantly enhance performance and reduce the power consumption of virtual machines compared  hardware emulation. Performance improvements vary based on architecture, but an approximate fourfold speed increase is generally expected. However, no virtualization method can fully match the efficiency of running directly on bare metal \parencite{horn2025virtualization}.
 
-\subsection{Comparison -- is it worth?}
+The following section will provide insights into the performance of hardware virtualization for deploying CTF challenges, as running on UCloud with emulation proved insufficient.
+
+\subsection{Comparison -- Is It Worth It?}
+Performance testing was conducted, and the results are presented in Table \ref{table:performance}. These results may be skewed due to probes being performed only every 30 seconds, potentially affecting the accuracy of readiness times. Additionally, when using containers for deployment, the pod contains two containers: one for DinD and one for the challenge. Since the challenge container often starts faster than DinD, a 30-second delay was added to prevent crashes, which may also impact the results.
+
+The challenge used for testing is located in \texttt{examples/challenge-ssh}, and the deployment notebook can be found in \texttt{examples/deployment/notebook.ipynb}.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|l|l|l|l|}
+\hline
+\textbf{Test Run} & \textbf{PC HV} & \textbf{GCP HV} & \textbf{PC HE} & \textbf{PC Containers} \\ \hline
+1 & \SI{100}{\second} & \SI{123}{\second} & \SI{420}{\second} & \SI{128}{\second} \\ \hline
+2 & \SI{94}{\second}  & \SI{123}{\second} & \SI{410}{\second} & \SI{98}{\second}  \\ \hline
+3 & \SI{97}{\second}  & \SI{122}{\second} & \SI{410}{\second} & \SI{97}{\second}  \\ \hline \hline
+\textbf{Average} & \SI{97.00}{\second} & \SI{122.67}{\second} & \SI{413.33}{\second} & \SI{107.67}{\second} \\ \hline
+\end{tabular}
+\caption{Comparison of Virtualization and Emulation Performance. HV refers to \textit{hardware virtualization}, while HE refers to \textit{hardware emulation}. The PC has an Intel Core i9-8950HK CPU, while the GCP machine uses an 8 vCPU processor with at least an Intel Haswell architecture.}
+\label{table:performance}
+\end{table}
+
+The results confirm that hardware virtualization significantly improves performance -- approximately four times faster than hardware emulation, as stated in the blog. Locally, a challenge starts in about 97 seconds with hardware virtualization, compared to 413 seconds with hardware emulation, highlighting the advantage. GCP, while not as fast as the local machine, still offers a sufficient user experience. Interestingly, containers perform worse than VMs, likely due to the intentional 30-second sleep to prevent crashes. Even if containers are slower, they are still more lightweight in terms of resource consumption.
+
+UCloud, despite using an instance with 16 vCPU (\SI{2}{\giga\hertz}) and \SI{64}{\giga\byte} RAM, is significantly slower than the local machine. Deploying a CTF challenge here takes roughly 600 to 840 seconds, making it unsuitable for a smooth user experience. As a result, the platform was migrated to GCP.
+
+If UCloud supported hardware virtualization, a challenge could hypothetically be deployed in approximately 200 seconds. While this would be an improvement, the benefit of hardware virtualization on slower machines may vary and is not necessarily proportional.
+
+Hardware virtualization incurs higher operational costs, with GCP being significantly more expensive than UCloud. If budget constraints are not a concern, opting for a GCP instance ensures a superior user experience. Otherwise, compromises may be necessary. Nevertheless, the performance advantage is undeniable.
 
 \chapter{Conclusion}
 A review of state-of-the-art technologies provided valuable insights into popular solutions suitable for building a CTF platform. The development process followed an extreme programming approach, adapting to emerging needs as the project evolved. The platform's infrastructure is based on OSS, with the only custom-developed component being the Deployer Backend. While integrating OSS is not always easier than developing software from scratch, it significantly reduces time and effort and offers the advantage of community-driven maintenance.\todo{Too tough beginning}\todo{State achievements directly}
