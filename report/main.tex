@@ -1307,14 +1307,115 @@ The primary advantage of SonarCloud is its ability to provide a comprehensive ov
 The dashboard is available at \href{https://sonarcloud.io/project/overview?id=KianBankeLarsen_CTF-Platform}{\texttt{https://sonarcloud.io/project/overview?\allowbreak id=KianBankeLarsen\_CTF-Platform}}. Some folders are excluded from scanning, but approximately 8.500 lines of code are monitored by SonarCloud. Several security hotspots have been identified, and numerous issues require attention. An issue can be as simple as specifying a memory request for a container. SonarCloud also reports that 5.8\% of the code in the CTF-Challenges repository is duplicated, along with other metrics like maintainability highlighting technical debt.
 
 \section{Deployer Backend}
+This section examines the developed solution endpoints, container implementation, and the process of toggling this feature using a feature flag in Unleash. Additionally, it details the VM Disk Image construction during platform deployment. Supplementary minor codebase adjustments, such as establishing trust in the PKI, are briefly discussed in Section \ref{sec:deployer_backend} without extensive elaboration.
 
-\subsection{Endpoints}
+Since the Disk Image is stored in a private container registry, an \texttt{imagePullSecret} is required in the same namespace as the deployment. Because secrets cannot be shared across namespaces, this section will also explain how Reflector can be used to manage secrets efficiently.
+
+\subsection{Solution Endpoints}
+Solution endpoints verify the correctness of a CTF challenge by demonstrating that it can be solved by a script. These endpoints are registered in \texttt{src/application/challenges/backend/cmd/server/main.go}, where handlers for processing requests are also specified. The Solution category includes the following five endpoints:
+
+\begin{itemize}
+    \item \texttt{GET /solutions/\{id\}/download}
+    \item \texttt{GET /solutions/\{id\}/logs}
+    \item \texttt{POST /solutions/\{id\}/start}
+    \item \texttt{POST /solutions/\{id\}/stop}
+    \item \texttt{POST /solutions/\{id\}/verify}
+\end{itemize}
+
+Only the \texttt{logs}, \texttt{start}, and \texttt{stop} endpoints should be exposed to users, as the remaining are intended for internal use only. The \texttt{download} endpoint allows retrieval of user-provided solution code, which is executed upon a \texttt{POST} request to the \texttt{start} endpoint. Similarly, only solution containers should be permitted to push the flag. While the solution VM code may be simplistic, the flag must be submitted by the test itself. Users should not be allowed to verify a challenge without executing the solution code. The \texttt{download} endpoint requires authentication via a generated token, whereas the \texttt{verify} endpoint currently lacks authentication.
+
+The \texttt{download} endpoint was introduced in the Solution category to align with existing code, as adding a new endpoint was simpler than refactoring. The \texttt{verify} endpoint is required to mark a challenge as verified by comparing the submitted flag with the one defined in \texttt{challenge.yml}. Although \texttt{challenge.yml} supports multiple flags, the platform permits only one flag per challenge. This limitation was inferred from the \texttt{POST /challenges/\{id\}/publish} endpoint, which only accepts a single flag. Consequently, support for multiple flags in \texttt{verify} was unnecessary.
+
+The \texttt{start} endpoint was particularly intricate, requiring a deep understanding of the existing codebase. Before proceeding, fundamental questions such as \textit{how does this work} and \textit{why was it designed this way} had to be answered, but with no one available to provide insights, the answers had to be determined independently. Due to time constraints, the goal was not to restructure the code or significantly alter its flow but to maximize code reuse while integrating support for solutions. The primary modifications involved manipulating resource and namespace creation. In the database, solution and challenge instances are treated identically. Although this was intended to simplify development, it may not be ideal. Consequently, the code for solutions and challenges is tightly coupled, which is suboptimal. Regarding containers or VMs, the only difference between a solution and a challenge is the initialization script executed during startup.
+
+The \texttt{logs} endpoint closely mirrors the \texttt{challenges} endpoint, differing only in the resource from which logs are scraped. This required minimal modifications. My primary contribution was adding support for both containers and VMs by inspecting the \texttt{managed-by} label, which was incorporated into deployment resources to identify the appropriate container for log retrieval.
+
+Similarly, the \texttt{stop} endpoint functions much like its counterpart in the \texttt{challenges} category. Code was implemented to determine the relevant namespace for a challenge or solution, and once identified, the namespace is deleted.
 
 \subsection{Unleash}
+Unleash is a required dependency for toggling the VM feature flag and is bundled with the Deployer backend in the Helm chart. If an existing Unleash instance is available, it can be disabled by setting \texttt{unleash.enabled} to \texttt{false} in the Values file.
+
+The Unleash instance deploys its own PostgreSQL database. Initially, database connection issues arose because the backend and Unleash databases shared labels, causing service misrouting. This was resolved by explicitly specifying \texttt{fullnameOverride} for the database in the Values file.
+
+The Unleash instance must include a feature flag named \texttt{use-virtual-machine}, though the associated environment value is optional and can be set in the Helm Values file. The same configuration applies to both development and production, with the production environment specified for consistency. The rollout strategy is configured uniformly for all users.
+
+The feature flag is loaded as a JSON file, \texttt{src/application/vm-feature-flag\allowbreak.json}, with basic configurations provided via environment variables, including default admin credentials, client API tokens, and enabled environments.
+
+The Deployer backend uses the \texttt{unleash-client-go/v4} client \parencite{unleash_client_go}. Figure \ref{fig:unleash_config} illustrates its configuration in Go. The context can be modified with \texttt{unleash\allowbreak.WithContext}, allowing gradual rollouts or selective feature toggling based on criteria such as user ID.
+
+\begin{figure}[h]
+    \centering
+\begin{minted}{go}
+unleash.Initialize(
+    unleash.WithListener(&unleash.DebugListener{}),
+    unleash.WithAppName("deployer-service"),
+    unleash.WithUrl(config.Values.Unleash.Url),
+    unleash.WithEnvironment(config.Values.Unleash.Environment),
+    unleash.WithCustomHeaders(
+        http.Header{"Authorization": {
+            config.Values.Unleash.ApiKey,
+        }},
+    ),
+)
+
+// Example usage
+useVm := unleash.IsEnabled("use-virtual-machine")
+\end{minted}
+    \caption{Unleash configuration in Go.}
+    \label{fig:unleash_config}
+\end{figure}
+
+Once the Unleash client is initialized, feature flag status can be queried using \texttt{unleash.IsEnabled}, as shown in Figure \ref{fig:unleash_config}.
 
 \subsection{Reflector}
+Kubernetes Reflector is a controller that monitors Kubernetes secrets with specific labels and replicates them across namespaces \parencite{kubernetes_reflector}. This facilitates secret sharing without requiring manual creation in each namespace. The controller automatically updates reflected secrets when changes occur in the source namespace. The relevant annotations are:
+
+\begin{itemize}
+    \item \texttt{reflector.v1.k8s.emberstack.com/reflection-allowed}
+    \item \texttt{reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces}
+    \item \texttt{reflector.v1.k8s.emberstack.com/reflection-auto-enabled}
+    \item \texttt{reflector.v1.k8s.emberstack.com/reflection-auto-namespaces}
+\end{itemize}
+
+The documentation does not explicitly clarify whether both \texttt{reflection-auto\allowbreak -enabled} and \texttt{reflection-allowed} are required. However, it is assumed that both are necessary -- one to permit reflection and another to automatically create mirrored secrets. Reflection can also be restricted to specific namespaces using \texttt{reflection-allowed-namespaces}, which limits access to designated resources. The \texttt{imagePullSecret} is confined to namespaces matching the regex pattern \texttt{"(challenge|test)-.*"}.
+
+Reflector is bundled with the Deployer backend but can be disabled by setting \texttt{reflection.enabled} to \texttt{false} in the Helm chart. Its sole function is to copy the \texttt{imagePullSecret} from the \texttt{ucloud} namespace to automatically generated challenge namespaces. Since each challenge is deployed in a separate namespace, the \texttt{imagePullSecret} must be present to enable image pulls from the private registry.
 
 \subsection{Building VM Disk Image}
+Figure \ref{fig:dockerfile_vm_image} illustrates the VM Dockerfile.
+
+\begin{figure}[h]
+    \centering
+\begin{minted}{Docker}
+FROM python:3.14.0a5-slim-bullseye AS download
+WORKDIR /main
+COPY requirements.txt .
+COPY get_vm.py .
+RUN python3 -m pip install -r requirements.txt
+RUN python3 get_vm.py
+
+FROM scratch
+COPY --from=download --chown=107:107 /main/alpine_VM.qcow2 /disk/
+\end{minted}
+    \caption{Multi-stage Dockerfile for building the VM Disk Image. The first stage downloads the image, while the second stage prepares the final VM image.}
+    \label{fig:dockerfile_vm_image}
+\end{figure}
+
+Due to its \SI{539,5}{\mega\byte} size, the disk image is too large to store in Git. Instead, a multi-stage Dockerfile retrieves the image from Google Drive before assembling the VM image. This process is managed by a Python script, shown in Figure \ref{fig:python_script_vm_image}, which utilizes the gdown library for downloading.
+
+\begin{figure}[h]
+    \centering
+\begin{minted}{python}
+import gdown
+url = 'https://drive.google.com/uc?id=1LoR4zu9GZHHIEeMmYaSA1n5eSzXOimkm'
+output = 'alpine_VM.qcow2'
+gdown.download(url, output, quiet=False)
+\end{minted}
+    \caption{Python script for retrieving the VM Disk Image from Google Drive.}
+    \label{fig:python_script_vm_image}
+\end{figure}
+
+The first stage executes the Python script to download the publicly available file from Google Drive. The second stage then transfers the artifact into the \text{/disk/} directory, following KubeVirt documentation \parencite{kubevirt_disk_image}.
 
 \chapter{Discussion}
 In this chapter, we will examine the development process and the key decisions made throughout the project. With a critical yet objective approach, we will assess these choices, explore possible alternatives, and provide a comprehensive evaluation of the platform's overall performance.
@@ -1379,7 +1480,7 @@ Parallel execution can optimize deployment speed, but Pulumi restricts this appr
 
 To maintain a clean development environment, an additional task facilitates complete teardown. Before shutting down the cluster, developers should either delete the Pulumi state file or destroy resources to prevent inconsistencies. If resources remain undeleted, Pulumi will incorrectly assume they exist even when they do not. Running \texttt{Pulumi refresh} updates the state file to reflect the actual state of the cluster, though the preferred approach is executing the ``destroy everything'' task before terminating Minikube for a clean slate.
 
-\section{Deployer Backend}
+\section{Deployer Backend}\label{sec:deployer_backend}
 Taking full responsibility for maintaining and extending the Deployer Backend presented challenges due to the lack of documentation and formal onboarding. Understanding the system's flow and underlying design choices required considerable effort, particularly in determining the reasoning behind key implementation decisions. While initially involved in a supporting role, the responsibility eventually expanded to overseeing its continued development, integration into the platform, and cloud-based testing.
 
 The following sections will explore the contributions made to the project prior to its handover, the complications arising from the absence of documentation on the Disk VM Image, and the broader impact of the code's structure and design choices on subsequent development efforts.
@@ -1428,6 +1529,8 @@ The backend currently requires users to send an access token in the request head
 functionality, requiring all verified challenges to originate from a solution VM would provide a safeguard.
 
 Standardizing responses in the backend would improve consistency. The \texttt{start} and \texttt{status} endpoints do not return the same fields, but aligning them may be beneficial. A more efficient approach would be to use the \texttt{start} endpoint to initiate a challenge and also serve as the \texttt{status} endpoint once the challenge has started. Since both endpoints operate on the same challenge ID, separating them serves no clear purpose. Additionally, the \texttt{status} endpoint could be improved by verifying the readiness of multiple containers (including sidecars) rather than only assessing the container running the compose file. It has been verified that the \texttt{compute} container utilizes the probe configured for the VM. Previously, it was assumed that this was incorrect, as the VM runs as \texttt{virtualmachine.kubevirt.io/challenge}. Yet, the \texttt{compute} container and the VM share the same readiness status.
+
+Although probes are correctly configured, the deployment faces another challenge. The VM/container downloads the challenge code at startup, but a hardcoded restriction prevents downloads after 20 minutes. Removing this limitation is advisable, as a liveness probe failure beyond that point prevents recovery, even if Kubernetes restarts the resource.
 
 \subsection{Missing Features}
 Resource availability is limited. Currently, only one solution can run per challenge, and each user can run only one challenge at a time. However, users who have submitted multiple challenges lack visibility into which one has been started or whether any have been initiated. Introducing an endpoint to retrieve running instances would address this issue. Additionally, challenges and tests are subject to automatic termination after a predefined duration. While this restriction is generally acceptable, administrators might need the ability to manually terminate a challenge before its expiration. However, this is currently not possible, as only the user who started the challenge can stop it. This limitation arises because the request's user ID is used to identify the corresponding namespace for deletion.
