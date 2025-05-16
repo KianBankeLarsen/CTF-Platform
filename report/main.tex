@@ -83,7 +83,7 @@ The motivation behind this thesis is to develop a CTF platform tailored for educ
 
 Haaukins, a state-of-the-art platform used to host De Danske Cybermesterskaber (DDC), has several limitations. As highlighted in Henrik Rossen Jakobsen's thesis, Haaukins is complex to deploy due to numerous manual steps and limited documentation. Additionally, validating challenges requires setting up a CTFd event, making iterative testing cumbersome. The thesis is summarized in Section \ref{sec:henrik_thesis}.
 
-To address these challenges, this project builds upon Henrik's work with the CTFd plugin and Deployer Backend. The goal is to enhance its functionality by integrating solutions for challenge validation and introducing container support where VM isolation is unnecessary. However, this is just one component of a larger platform. To ensure full usability, additional infrastructure must be developed, including persistent storage, authentication mechanisms, an introductory GUI for user interaction, and a bastion host for secure SSH access. The platform must also support straightforward deployment and reliable operation on UCloud.
+This project builds upon Henrik's work with the CTFd plugin and Deployer Backend, aiming to enhance functionality by integrating challenge validation and container support where VM isolation is unnecessary. However, this is just \textit{one} of many components, as detailed in Figure \ref{fig:architecture}. While a starting point for the \texttt{Deployer/Challenges} box has been provided, all other components in the UCloud Kubernetes subgraph have been developed by the author of this thesis, including the NGINX configuration on GCP and the omitted CTFd instance. These components are crucial to the platform, ensuring persistent storage, authentication, an introductory GUI for user interaction, and a bastion host for secure SSH access. The platform must support straightforward deployment and reliable operation on UCloud.
 
 \section{Contributions}
 This thesis explores open-source software (OSS) to develop a CTF platform that is easy to deploy and maintain, providing a minimal viable product (MVP) for hosting CTF competitions. The key contributions are:
@@ -99,7 +99,9 @@ This thesis explores open-source software (OSS) to develop a CTF platform that i
     \item The platform is deployable on both UCloud and GCP.
 \end{itemize}
 
-Experiments confirm players can validate challenges efficiently, VM and container support improves adaptability, and authentication ensures controlled access. Monitoring, storage provisioning, and SSH security enhance reliability, while deployment on UCloud and GCP demonstrates scalability. Figure \ref{fig:wordcloud} illustrates the technologies used in this thesis.
+This project successfully yielded an easily deployable CTF platform using open-source tools, fulfilling its goal of creating an MVP for hosting cybersecurity competitions. The implemented platform allows players to launch, terminate, and verify challenge environments on demand through both an API and the CTFd interface. It supports VM and container-based deployments under a unified framework. Keycloak was integrated for SSO authentication and role-based access control, and a bastion host with PKI-issued certificates ensures secure SSH connectivity to each challenge instance. Monitoring and logging were achieved through the integration of Prometheus, Grafana, Loki, and Promtail, while dynamic persistent storage provisioning guarantees reliability and data integrity. A static documentation website built with Jekyll guides users effectively. The platform has been successfully deployed on both UCloud and GCP, demonstrating its adaptability. 
+
+% Figure \ref{fig:wordcloud} illustrates the technologies used in this thesis.
 
 \section{Structure} 
 The following chapters outline the structure of this thesis:
@@ -112,18 +114,18 @@ The following chapters outline the structure of this thesis:
 
 The project files and documentation are available at \url{https://kianbankelarsen.github.io/CTF-Platform/}, along with additional related resources, all of which can be accessed through this URL.
 
-This report was prepared with the assistance of generative AI tools such as Edge Copilot and GitHub Copilot, specifically for linguistic refinement and error correction purposes.
+This report was prepared with the assistance of generative AI tools such as Edge Copilot and GitHub Copilot, specifically for linguistic refinement and grammar correction purposes.
 
-\vspace*{\fill}
+% \vspace*{\fill}
 
-\begin{figure}[H]
-    \centering
-    \includesvg[width=1\textwidth]{../assets/images/wordcloud.svg}
-    \caption{Word cloud generated from technologies applied in this thesis.}
-    \label{fig:wordcloud}
-\end{figure}
+% \begin{figure}[H]
+%     \centering
+%     \includesvg[width=1\textwidth]{../assets/images/wordcloud.svg}
+%     \caption{Word cloud generated from technologies applied in this thesis.}
+%     \label{fig:wordcloud}
+% \end{figure}
 
-\vspace*{\fill}
+% \vspace*{\fill}
 
 \chapter{State of the Art}
 
@@ -162,7 +164,7 @@ To address the challenges of vendor lock-in and ensure true cloud-agnostic archi
 
 Choosing a cloud provider is often influenced by cost considerations. Other important factors can include capabilities such as nested virtualization and access to external storage services. The cost of a provider depends on aspects like the range of services available, the quality of their infrastructure, and their servers geographical location. For this project, the following providers were evaluated: UCloud, Hetzner, and Google Cloud Platform (GCP).
 
-\paragraph{UCloud} UCloud provides services such as MinIO, terminals, and virtual machines. While the virtual machines are managed by AAU, the associated services may be provided by either AAU or SDU \Parencite{sdu_cloud_providers}. Based on experience, nested virtualization is not possible, despite explicit claims from UCloud (as indicated in mail correspondence)\todo{attach}. Another limitation of UCloud is that virtual machines are only accessible via port 22 (SSH), which does not suffice for hosting web services since browsers typically require ports 80 (HTTP) or 443 (HTTPS). However, a key advantage of UCloud is its in-house maintenance, which helps keep costs low. In fact, server fees could be considered negligible, as funding may be obtainable through the university by submitting resource requests. Amazon Web Services and Microsoft Azure might as well have been considered but was not. 
+\paragraph{UCloud} UCloud provides services such as MinIO, terminals, and virtual machines. While the virtual machines are managed by AAU, the associated services may be provided by either AAU or SDU \Parencite{sdu_cloud_providers}. Based on experience, nested virtualization is not possible, despite explicit claims from UCloud -- appendix, Chapter \ref{sec:hardware_virtualization_email}. Another limitation of UCloud is that virtual machines are only accessible via port 22 (SSH), which does not suffice for hosting web services since browsers typically require ports 80 (HTTP) or 443 (HTTPS). However, a key advantage of UCloud is its in-house maintenance, which helps keep costs low. In fact, server fees could be considered negligible, as funding may be obtainable through the university by submitting resource requests. Amazon Web Services and Microsoft Azure might as well have been considered but was not. 
 
 \paragraph{Hetzner} Hetzner provides a cost-effective option compared to GCP, while being pricier than UCloud. Hetzner offers competitive pricing for external storage and virtual machines. For instance, a general-purpose machine with 16 vCPUs, 64 GB of RAM, and 360 GB of NVMe SSD storage is available for a maximum cost of \$108 per month \Parencite{hetznercloud}. However, nested virtualization remains a relatively rare feature \Parencite{hetzner_nested_virtualization}.
 
@@ -268,7 +270,7 @@ Next, what is a client? In a typical server-client communication model, Keycloak
 The default settings should generally suffice, as we plan to rely primarily on the access token, with no expectation of using the ID token -- more details on this can be found in Subsection \ref{sec:token_claims}.
 
 \subsection{Token Claims \& Scopes}\label{sec:token_claims}
-Authenticating using Keycloak will return a JWT in response. This JWT contains both an ID token and an access token. The access token can be used to query the \texttt{userinfo} endpoint if needed. The content or claims within the JWT must be configured in Keycloak. If roles are needed in either the userinfo or the ID token, a predefined mapper must be configured to include these claims. The access- and ID token is by default encoded using the RS256 algorithm -- RSA Digital Signature Algorithm with the SHA-256 hash function \todo{Check this}.
+Authenticating using Keycloak will return a JWT in response. This JWT contains both an ID token and an access token. The access token can be used to query the \texttt{userinfo} endpoint if needed. The content or claims within the JWT must be configured in Keycloak. If roles are needed in either the userinfo or the ID token, a predefined mapper must be configured to include these claims. The access- and ID token is by default signed using the RS256 algorithm -- RSA Digital Signature Algorithm with the SHA-256 hash function.
 
 The JWT includes some default metadata claims that provide information about who issued the token, when it was issued, and other essential details. The mandatory claims are listed below:
 
@@ -287,7 +289,7 @@ Keycloak includes certain scopes by default without needing to request them expl
     \item \textbf{basic}: Typically includes basic user information such as user ID (the \texttt{sub} claim) and authentication time. 
     \item \textbf{email}: Contains the user's email address and a flag indicating whether the email has been verified. 
     \item 
-    \textbf{profile}: Includes profile information such as name, family name, given name, nickname, and profile picture. 
+    \textbf{profile}: Includes profile information such as nickname, middle name, birthdate, gender, and profile picture. 
     \item \textbf{roles}: Lists the roles assigned to the user, which can be used for authorization purposes. 
 \end{itemize}
 
@@ -300,7 +302,7 @@ There are also scopes that must be explicitly requested. This includes informati
     \item \textbf{phone}: Includes the user's phone number and a flag indicating whether the phone number has been verified. 
 \end{itemize}
 
-Being aware of the JWT's content is definitely useful during authorization.\todo{Check information in this subsection.}
+Being aware of the JWT's content is definitely useful during authorization.
 
 \subsection{Supported Grant Types}
 Keycloak supports various OAuth 2.0 grant types, defining how clients obtain access tokens for different authentication scenarios, each with specific security considerations. This section is based on the official Keycloak documentation \Parencite{keycloakGrantTypes}.
@@ -787,7 +789,7 @@ Originally developed by Henrik Rossen Jakobsen, the plugin was later modified by
     % First subfigure
     \begin{subfigure}[b]{0.45\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{example-image-b}
+        \includegraphics[width=\textwidth]{images/CTFd_unverified.png}
         \caption{Challenge marked as unverified.}
         \label{fig:unverified_badge}
     \end{subfigure}
@@ -795,7 +797,7 @@ Originally developed by Henrik Rossen Jakobsen, the plugin was later modified by
     % Second subfigure
     \begin{subfigure}[b]{0.45\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{example-image-c}
+        \includegraphics[width=\textwidth]{images/CTFd_verified.png}
         \caption{Challenge marked as verified.}
         \label{fig:verified_badge}
     \end{subfigure}
@@ -1656,4 +1658,10 @@ Future development of the platform includes improving log retrieval by replacing
 \phantomsection
 \addcontentsline{toc}{chapter}{References}
 \printbibliography
+
+\phantomsection
+\chapter*{Appendix}
+\section*{Hardware Virtualization Email}\label{sec:hardware_virtualization_email}
+\addcontentsline{toc}{chapter}{Appendix}
+\includepdf[pages={-},angle=0]{./appendix/hardware_virtualization_mail.pdf}
 \end{document}
