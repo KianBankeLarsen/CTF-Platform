@@ -1,0 +1,58 @@
+% !TeX root = main.tex
+
+\documentclass{beamer}
+
+\usepackage{pgfplots}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{ragged2e}
+\usepackage{setspace}
+\usepackage{comment}
+\usepackage{csquotes}
+\usepackage{float}
+\usepackage{svg}
+\usepackage{multicol}\columnseprule 0.4pt\raggedcolumns
+\usepackage[utf8]{inputenc}
+\usepackage{hyperref}
+
+\setbeamertemplate{footline}[frame number]
+
+\setbeamertemplate{footline}{%
+  \leavevmode%
+  \hbox{\begin{beamercolorbox}[wd=0.565\paperwidth,ht=0ex,dp=0ex,right]{frame number}%
+    \vskip0pt
+    \usebeamerfont{footline}\usebeamercolor[fg]{footline}
+    \insertframenumber/\inserttotalframenumber
+    \vskip0.5ex
+    \end{beamercolorbox}%
+  }%
+  \vskip0pt%
+}
+
+\usetheme{Hannover}
+\usecolortheme{orchid}
+\definecolor{sidebar}{RGB}{34,34,138}
+\setbeamercolor{sidebar}{bg=sidebar}
+\setbeamercolor{title in sidebar}{fg=white}
+\setbeamercolor{author in sidebar}{fg=white}
+\setbeamercolor{section in sidebar}{fg=white}
+\hypersetup{pdfpagemode=FullScreen}
+\title{Capture the Flag Platform}
+\subtitle{Made for UCloud, Adapted to GCP\\ \vspace{17pt} \includesvg[width=.3\textwidth]{images/SDU.svg}\vspace{-10pt}}
+\author[K. B. Larsen]{Kian Banke Larsen}
+\institute{Southern University of Denmark}
+\date{\today}
+
+\beamertemplatenavigationsymbolsempty
+
+\begin{document}
+\begin{frame}
+\titlepage
+\end{frame}
+
+\section{Outline}
+\begin{frame}{Outline}
+\tableofcontents
+\end{frame}
+
+\end{document}

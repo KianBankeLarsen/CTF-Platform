@@ -14,6 +14,8 @@ svg-inkscape/
 *.run.xml
 _minted-main/
 *.pdf
+*.nav
+*.snm
 
 # TypeScript
 bin/
