@@ -15,6 +15,15 @@
 \usepackage[utf8]{inputenc}
 \usepackage{hyperref}
 
+\usepackage{siunitx}
+\sisetup{%quotient-mode=fraction,
+		output-decimal-marker = {.},
+		per-mode = fraction,
+		separate-uncertainty = true,
+		multi-part-units=single,
+		exponent-product = \cdot,
+		range-phrase=--}
+
 \setbeamertemplate{footline}[frame number]
 
 \setbeamertemplate{footline}{%
@@ -50,9 +59,76 @@
 \titlepage
 \end{frame}
 
-\section{Outline}
+\section*{Outline}
 \begin{frame}{Outline}
 \tableofcontents
 \end{frame}
 
+\section{Introduction}
+\begin{frame}{Introduction}
+    \begin{itemize}
+        \item What are we solving?
+        \item Who are we solving it for?
+        \item Why are why solving it?
+        \item How are we solving it?
+    \end{itemize}
+\end{frame}
+
+\section{Architecture}
+\begin{frame}{Architecture}
+    \begin{figure}
+        \centering
+        \includegraphics[width=.7\textwidth]{../report/images/ucloud-architecture.png}
+        \caption{Architecture of the CTF platform deployed on UCloud.}
+    \end{figure}
+\end{frame}
+
+\section{Storage}
+\begin{frame}{Storage}
+    \begin{figure}
+        \centering
+        \includegraphics[width=.8\textwidth]{../report/images/storage-provisioner.png}
+        \caption{Storage provisioning architecture of the CTF platform on UCloud using MinIO.}
+    \end{figure}
+\end{frame}
+
+\section{Pulumi}
+\begin{frame}{Stacks}
+    \begin{figure}
+        \centering
+        \includegraphics[width=.45\textwidth]{./images/pulumi-stacks.png}
+        \caption{Pulumi Stacks Relationship. An arrow pointing from a source to a target indicates that the source depends on the target. Given the layered approach, these relationships are transitive.}
+    \end{figure}
+\end{frame}
+
+\section{VMs}
+\begin{frame}{Virtual Machines}
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|l|l|l|l|}
+\hline
+\textbf{Test Run} & \textbf{PC HV} & \textbf{GCP HV} & \textbf{PC HE} & \textbf{PC Containers} \\ \hline
+1 & \SI{100}{\second} & \SI{123}{\second} & \SI{420}{\second} & \SI{128}{\second} \\ \hline
+2 & \SI{94}{\second}  & \SI{123}{\second} & \SI{410}{\second} & \SI{98}{\second}  \\ \hline
+3 & \SI{97}{\second}  & \SI{122}{\second} & \SI{410}{\second} & \SI{97}{\second}  \\ \hline \hline
+\textbf{Average} & \SI{97.00}{\second} & \SI{122.67}{\second} & \SI{413.33}{\second} & \SI{107.67}{\second} \\ \hline
+\end{tabular}
+\caption{Comparison of Virtualization and Emulation Performance. HV refers to \textit{hardware virtualization}, while HE refers to \textit{hardware emulation}. The PC has an Intel Core i9-8950HK CPU, while the GCP machine uses an 8 vCPU processor with at least an Intel Haswell architecture.}
+\label{table:performance}
+\end{table}
+\end{frame}
+
+\section{Live Demo}
+\begin{frame}{Live Demonstration}
+    \begin{enumerate}
+        \item Platform overview
+        \item Starting a CTF challenge
+        \item Starting a CTF challenge solution
+        \item CTFd OIDC plugin
+        \item CTFd verification badge
+        \item Feature Flagging
+        \item Server monitoring
+        \item Future Development
+    \end{enumerate}
+\end{frame}
 \end{document}
