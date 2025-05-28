@@ -239,7 +239,7 @@ Our project consists of five Pulumi projects, each with a specific role to play:
   * **SSLH protocol multiplexer:** A protocol multiplexer that allows multiple services to share a single port, such as SSH and HTTPS.
   * **NGINX Proxies**: Proxies to upgrade connection and/or move SSL termination to pod.
   * **Unleash**: An open-source solution for feature flagging.
-  * **Reflector:** A Kubernetes utility that automatically mirror secrets across namespaces.
+  * **Reflector:** A Kubernetes utility that automatically mirrors secrets across namespaces.
   * **Docker Registry:** A system for storing and sharing Docker images.
 * **authentication:** 🔑 Manages SSO capabilities provided by Keycloak.
   * **Keycloak:** An open-source identity and access management solution for Single Sign-On (SSO), enabling secure authentication and authorization.
