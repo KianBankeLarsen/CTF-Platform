@@ -72,15 +72,47 @@
         \item Why are why solving it?
         \item How are we solving it?
     \end{itemize}
+\vspace*{\fill}
+    \only<2>{
+        \begin{center}
+            Let us have a peek before we continue\ldots
+        \end{center}
+    }
 \end{frame}
 
 \section{Architecture}
-\begin{frame}{Architecture}
+\begin{frame}{Hybrid Architecture}
     \begin{figure}
         \centering
         \includegraphics[width=.7\textwidth]{../report/images/ucloud-architecture.png}
-        \caption{Architecture of the CTF platform deployed on UCloud.}
+        \caption{Architecture of the CTF platform deployed on UCloud/GCP.}
     \end{figure}
+\end{frame}
+
+\begin{frame}{GCP Architecture}
+    \begin{figure}
+        \centering
+        \includegraphics[width=.7\textwidth]{./images/GCP-architecture.png}
+        \caption{Architecture of the CTF platform deployed on GCP.}
+    \end{figure}
+\end{frame}
+
+\begin{frame}{UCloud Architecture}
+    \only<1>{
+    \begin{figure}
+        \centering
+        \includegraphics[width=.7\textwidth]{./images/UCloud-architecture.png}
+        \caption{Architecture of the CTF platform deployed on UCloud. Not successfully implemented but possibly feasible.}
+    \end{figure}
+    }
+    \only<2>{
+    \begin{itemize}
+        \item Connect to job functionality is not working.
+        \item Cannot run Headscale on Docker service (NGNIX and Terminal).
+        \item Only one public IP address per project.
+        \item Managed to route traffic from terminal to VM using SSH port forwarding -- health endpoints responded. 
+    \end{itemize}
+    }
 \end{frame}
 
 \section{Storage}
@@ -121,14 +153,42 @@
 \section{Live Demo}
 \begin{frame}{Live Demonstration}
     \begin{enumerate}
-        \item Platform overview
         \item Starting a CTF challenge
         \item Starting a CTF challenge solution
         \item CTFd OIDC plugin
         \item CTFd verification badge
-        \item Feature Flagging
-        \item Server monitoring
-        \item Future Development
+        \item Feature flagging
+        \item Server/cluster monitoring
     \end{enumerate}
 \end{frame}
+
+\section{Remarks}
+\begin{frame}{Docker in Docker}
+    \begin{figure}
+        \centering
+        \includegraphics[width=.9\textwidth]{./images/docker-dind.png}
+        \caption{DinD architecture.}
+    \end{figure}
+\end{frame}
+
+\begin{frame}{Git LFS}
+    \begin{figure}
+        \centering
+        \href{https://git-lfs.com/}{%
+            \includegraphics[width=.9\textwidth]{./images/Git-LFS.png}
+        }
+        \caption{Use Git LFS to track large files in your repository.}
+    \end{figure}
+\end{frame}
+
+\begin{frame}{SagaLabs}
+    \begin{figure}
+        \centering
+        \href{https://sagalabs.dk/}{%
+            \includegraphics[width=1\textwidth]{./images/SagaLabs.png}
+        }
+        \caption{SagaLabs Platform.}
+    \end{figure}
+\end{frame}
+
 \end{document}
