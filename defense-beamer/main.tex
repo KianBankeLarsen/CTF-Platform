@@ -80,6 +80,20 @@
     }
 \end{frame}
 
+\section{Goals}
+\begin{frame}{Goals}
+    \begin{itemize}
+        \item Players can start and stop test environments on demand and check their verification through the API or CTFd.
+        \item The platform supports both VMs and containers, with a feature flag controlling the selection.
+        \item Keycloak provides SSO authentication, and role-based access control.
+        \item Grafana, Prometheus, Loki, and Promtail facilitate metrics collection, logging, and system monitoring.
+        \item Dynamic storage provisioning.
+        \item A bastion host enforces secure SSH access to challenges, requiring authentication with Private Key Infrastructure-issued certificates.
+        \item A Jekyll-powered static homepage.
+        \item The platform is deployable on both UCloud and GCP.
+    \end{itemize}
+\end{frame}
+
 \section{Architecture}
 \begin{frame}{Hybrid Architecture}
     \begin{figure}
@@ -189,6 +203,17 @@
         }
         \caption{SagaLabs Platform.}
     \end{figure}
+\end{frame}
+
+\section{Future Work}
+\begin{frame}{Future Work}
+    \begin{itemize}
+        \item Use Kubernetes Issuer for public-facing certificates.
+        \item NixOS for the VM.
+        \item OIDC plugin for Unleash.
+        \item Pull-through Docker registry.
+        \item Additional endpoints for the Deployer Backend.
+    \end{itemize}
 \end{frame}
 
 \end{document}
