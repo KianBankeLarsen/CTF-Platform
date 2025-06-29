@@ -208,14 +208,16 @@
 \section{Future Work}
 \begin{frame}{Future Work}
     \begin{itemize}
-        \item Use Kubernetes Issuer for public-facing certificates.
-        \item NixOS for the VM.
-        \item OIDC plugin for Unleash.
-        \item Pull-through Docker registry.
-        \item Promtail log scraping issue.
-        \item Make Deployer get logs from Loki.
-        \item Additional endpoints for the Deployer like listing running instances.
+        \item Use a Kubernetes Issuer for public-facing certificates.
+        \item Use NixOS for building the virtual machine image.
+        \item Integrate an OIDC plugin with Unleash.
+        \item Set up a pull-through Docker registry.
+        \item Resolve the Promtail log scraping issue.
+        \item Enable the Deployer to retrieve logs from Loki.
+        \item Add additional endpoints to the Deployer, such as listing running instances.
+        \item Challenges become invisible to the Deployer when in a pending state.
     \end{itemize}
 \end{frame}
+
 
 \end{document}
